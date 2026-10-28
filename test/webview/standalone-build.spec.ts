@@ -646,7 +646,10 @@ test.describe('standalone published comparison for a Claude artifact', () => {
 
     await page.locator('#results-btn').click();
     await expect(page.locator('#copy-toast')).toHaveText('results.txt copied to the clipboard (1 vote)');
-    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    // Windows' clipboard hands text back with CRLF line ends whatever was written into it; the page writes
+    // LF. Undone there only, so the Linux and macOS legs still compare the bytes as the page wrote them.
+    const read = await page.evaluate(() => navigator.clipboard.readText());
+    const copied = process.platform === 'win32' ? read.replace(/\r\n/g, '\n') : read;
     const iso = /^# Generated: (.+)$/m.exec(copied)?.[1];
     expect(iso).toBeTruthy();
     // Byte for byte what the shared serializer writes into results.txt.
