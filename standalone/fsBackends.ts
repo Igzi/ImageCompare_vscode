@@ -122,6 +122,33 @@ export async function createDroppedEntryBackend(root: FileSystemDirectoryEntry):
   return createFileListBackend(files);
 }
 
+/** The published-comparison manifest's file list, or a thrown reason; only relative paths inside the page's directory pass (docs/standalone.md: published-comparison-opens-itself). */
+export function parsePublishedManifest(text: string): string[] {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(text);
+  } catch {
+    throw new Error('imagecompare.json: not valid JSON');
+  }
+  const files = (manifest as { files?: unknown } | null)?.files;
+  if (!Array.isArray(files) || files.length === 0) throw new Error('imagecompare.json: must list "files"');
+  for (const file of files) {
+    if (typeof file !== 'string' || /^\/|^[a-z][a-z0-9+.-]*:|\\/i.test(file) || file.split('/').some(s => s === '.' || s === '..' || s === '')) {
+      throw new Error(`imagecompare.json: not a relative path inside the page's directory: ${JSON.stringify(file)}`);
+    }
+  }
+  return files;
+}
+
+/** Read-only backend over a published comparison: the listed paths stand in for a dropped folder, each fetched when read (docs/standalone.md: published-comparison-opens-itself). */
+export function createPublishedBackend(files: readonly string[], fetchFile: (path: string) => Promise<ArrayBuffer>): OpenedRoot {
+  return createFileListBackend(files.map(path => ({
+    name: path.split('/').pop(),
+    webkitRelativePath: `comparison/${path}`,
+    arrayBuffer: () => fetchFile(path),
+  }) as unknown as File));
+}
+
 /** Read-only backend over a `webkitdirectory` FileList (Firefox/Safari fallback) — nothing can be written. */
 export function createFileListBackend(files: readonly File[]): OpenedRoot {
   const byPath = new Map<string, File>();

@@ -176,6 +176,7 @@ verification steps.
 | Fix a reported bug end-to-end | `/fix-issue` skill |
 | Implement a new feature end-to-end | `/implement-feature` skill |
 | Open image comparisons programmatically | `/imagecompare` skill |
+| Publish a comparison as a web page (Claude artifact, static host) | `/imagecompare-artifact` skill |
 
 ## Change close-out (mandatory)
 

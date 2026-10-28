@@ -1,7 +1,7 @@
 # ImageCompare (standalone)
 
 A single self-contained HTML file for comparing image sets across modalities in a browser — no
-install, no server, no network.
+install and no server; it reads only the folder you open, or the files published next to it.
 
 > **Generated file. Do not push to this repository, ever.**
 > `image_compare.html` is built from
@@ -36,6 +36,27 @@ folder listing, so everything that would modify your files is disabled rather th
 
 Dragging a folder in gives a read-only session even on Chrome. Use the folder **picker** if you
 want voting, crop or delete.
+
+## Publish a comparison
+
+To share a comparison as a web page — a Claude artifact, GitHub Pages, any static host — upload
+`image_compare.html` unmodified into the comparison folder (one subdirectory per column, as above)
+together with an `imagecompare.json` that lists the images, paths relative to the page:
+
+```json
+{ "files": ["01_input/scene_001.webp", "02_model/scene_001.webp"] }
+```
+
+The page then opens that comparison by itself, read-only. One command writes the listing, run in
+the folder:
+
+```bash
+python3 -c "import json,pathlib; print(json.dumps({'files': sorted(p.as_posix() for p in pathlib.Path('.').glob('*/*') if p.is_file())}))" > imagecompare.json
+```
+
+Opened from disk (`file://`) the page cannot read its neighbours and shows the folder picker; serve
+the folder instead (`python3 -m http.server`). Agents: see the `imagecompare-artifact` skill in
+[toshas/ImageCompare_vscode](https://github.com/toshas/ImageCompare_vscode/tree/main/skills/imagecompare-artifact).
 
 ## Same code as the extension
 

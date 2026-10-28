@@ -4,6 +4,13 @@ All notable changes to the ImageCompare extension will be documented in this fil
 
 ## [Unreleased]
 
+### Added
+- **The standalone page publishes a comparison as it is.** Uploaded unmodified next to an
+  `imagecompare.json` — a plain listing of the images, in the usual one-folder-per-column layout —
+  to a Claude artifact or any static host, `image_compare.html` opens that comparison by itself,
+  read-only, instead of the folder picker; without one it shows the picker as before. The new
+  `imagecompare-artifact` skill gives agents the whole recipe, with no viewer code to write.
+
 ## [0.5.0] - 2026-09-06
 
 ### Added

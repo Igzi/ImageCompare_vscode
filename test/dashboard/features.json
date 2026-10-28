@@ -2870,6 +2870,52 @@
           ]
         },
         {
+          "id": "standalone-published-comparison",
+          "name": "Page published next to an imagecompare.json opens that comparison read-only (Claude artifacts, any static host)",
+          "tests": [
+            {
+              "suite": "webview",
+              "match": "standalone page published next to an imagecompare.json opens that comparison read-only"
+            },
+            {
+              "suite": "webview",
+              "match": "standalone page with no imagecompare.json beside it keeps the landing"
+            },
+            {
+              "suite": "webview",
+              "match": "standalone page reports a manifest that reaches outside its directory instead of opening it"
+            },
+            {
+              "suite": "unit",
+              "match": "returns the listed relative paths in manifest order"
+            },
+            {
+              "suite": "unit",
+              "match": "rejects a manifest with no files"
+            },
+            {
+              "suite": "unit",
+              "match": "rejects paths that leave the page directory"
+            },
+            {
+              "suite": "unit",
+              "match": "reports a page that is not JSON as a parse failure, not a comparison"
+            },
+            {
+              "suite": "unit",
+              "match": "lists the manifest as a folder whose subdirectories are the columns"
+            },
+            {
+              "suite": "unit",
+              "match": "reads each file through the injected fetch by its manifest-relative path, lazily, not at listing time"
+            },
+            {
+              "suite": "unit",
+              "match": "is read-only: nothing a published page lists can be written or deleted"
+            }
+          ]
+        },
+        {
           "id": "standalone-context-menu",
           "name": "Standalone right-click opens the app menu",
           "tests": [

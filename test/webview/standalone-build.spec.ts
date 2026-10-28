@@ -11,6 +11,8 @@
  * basename matches across modalities (scene_01_gt.png vs scene_01_pred.png), so a naive
  * same-name reimplementation in the adapter would fail every one of these assertions.
  * The results.txt readback pins the shared serializer byte-for-byte end to end.
+ * The published-comparison tests (the page next to an imagecompare.json) are outside the Vitest-only
+ * mutation harness; see docs/testing.md, "What nothing covers".
  */
 import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
@@ -18,6 +20,7 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { serializeResults } from '../../src/resultsFile';
+import { makeSolidPng } from '../fixtures/synthetic';
 import { STANDALONE_ARTIFACT, assertStandaloneArtifactFresh } from './standaloneArtifact';
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -25,6 +28,12 @@ const ARTIFACT = STANDALONE_ARTIFACT;
 
 let server: http.Server;
 let pageUrl: string;
+let baseUrl: string;
+
+// Files a test publishes next to a page (url path -> bytes); any other imagecompare.json is a 404,
+// as on a real static host, so pages without one keep their landing — except under /spa/, which
+// mimics a host that answers every path with the page itself.
+const published = new Map<string, Buffer>();
 
 test.beforeAll(async () => {
   // The artifact is built ONCE by globalSetup (test/webview/standaloneArtifact.ts); every worker
@@ -32,12 +41,26 @@ test.beforeAll(async () => {
   // half-written or older than its sources is the failure this guards, not just an absent file.
   assertStandaloneArtifactFresh();
   const html = fs.readFileSync(ARTIFACT);
-  server = http.createServer((_req, res) => {
+  server = http.createServer((req, res) => {
+    const url = decodeURIComponent((req.url ?? '/').split('?')[0]);
+    const data = published.get(url);
+    if (data) {
+      res.setHeader('Content-Type', url.endsWith('.json') ? 'application/json' : 'image/png');
+      // /slow/ answers late, so a test can open a folder while the manifest is still in flight.
+      setTimeout(() => res.end(data), url.startsWith('/slow/') ? 3000 : 0);
+      return;
+    }
+    if ((url.endsWith('/imagecompare.json') && !url.startsWith('/spa/')) || (url.startsWith('/published/') && !url.endsWith('.html'))) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.end(html);
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  pageUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/image_compare.html`;
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  pageUrl = `${baseUrl}/image_compare.html`;
 });
 
 test.afterAll(async () => {
@@ -412,6 +435,118 @@ test('standalone no-FSA drop path walks webkit entries into the read-only backen
     const c = document.getElementById('canvas') as HTMLCanvasElement | null;
     return !!c && c.width > 0 && c.height > 0;
   });
+});
+
+// ---- Published comparison: the unmodified page next to an imagecompare.json (docs/standalone.md) ----
+// Outside the Vitest-only mutation harness (docs/testing.md, "What nothing covers"): each test below
+// was watched failing against its own break of the adapter's boot; the listing rules they rely on are
+// mutation-covered in test/unit/publishedComparison.test.ts.
+
+/** Waits until the page's one-shot manifest boot has opened, reported, or found nothing. */
+async function publishedBootSettled(page: import('@playwright/test').Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __ic_standalone: { booted: Promise<void> } }).__ic_standalone.booted);
+}
+
+test('standalone page published next to an imagecompare.json opens that comparison read-only', async ({ page }) => {
+  // Same fixture names as the FSA and drop paths (no exact basename matches); the second row's gt file
+  // carries a '#', which only a per-segment URL encode keeps from being read as a fragment.
+  const files: Record<string, Buffer> = {
+    'gt/scene_01_gt.png': makeSolidPng(8, 6, [255, 0, 0]),
+    'gt/scene_02 #gt.png': makeSolidPng(9, 7, [0, 255, 0]),
+    'pred/scene_01_pred.png': makeSolidPng(5, 4, [0, 0, 255]),
+    'pred/scene_02 pred.png': makeSolidPng(6, 5, [255, 255, 0]),
+  };
+  published.set('/published/imagecompare.json', Buffer.from(JSON.stringify({ files: Object.keys(files) })));
+  for (const [rel, bytes] of Object.entries(files)) published.set(`/published/${rel}`, bytes);
+
+  await page.addInitScript(() => {
+    (window as unknown as { __ic_test_enabled: boolean }).__ic_test_enabled = true;
+  });
+  await page.goto(`${baseUrl}/published/image_compare.html`);
+
+  await page.waitForFunction(() => {
+    const t = (window as unknown as { __ic_test?: { getState(): { tupleCount: number } } }).__ic_test;
+    return !!t && t.getState().tupleCount > 0;
+  });
+  await expect(page.locator('#ic-landing')).toBeHidden();
+  const state = await page.evaluate(
+    () => (window as unknown as { __ic_test: { getState(): Record<string, unknown> } }).__ic_test.getState(),
+  );
+  // The listing feeds the same scanner a dropped folder does: same pairing, naming and column order.
+  expect(state.tupleCount).toBe(2);
+  expect(state.modalityCount).toBe(2);
+  expect(state.currentTupleName).toBe('scene_01');
+  expect(state.modalityPaths).toEqual(['/comparison/gt', '/comparison/pred']);
+  // Nothing beside a published page can be written: read-only, like the Firefox/Safari folder.
+  expect(state.votingEnabled).toBe(false);
+
+  // Each image is fetched by its relative URL and decoded at its real size, the '#' one included.
+  const canvasIs = (w: number, h: number) => page.waitForFunction(([w, h]) => {
+    const c = document.getElementById('canvas') as HTMLCanvasElement | null;
+    return !!c && c.width === w && c.height === h;
+  }, [w, h]);
+  await canvasIs(8, 6);
+  await page.keyboard.press('ArrowDown');
+  await canvasIs(9, 7);
+});
+
+test('standalone page with no imagecompare.json beside it keeps the landing', async ({ page }) => {
+  const manifest = page.waitForResponse(r => r.url().endsWith('/imagecompare.json'));
+  await page.goto(pageUrl);
+  // The one request is made and answered 404; only once the boot has settled can the landing be judged unchanged.
+  expect((await manifest).status()).toBe(404);
+  await publishedBootSettled(page);
+  await expect(page.locator('#ic-landing')).toBeVisible();
+  await expect(page.locator('#ic-drop')).toBeVisible();
+  await expect(page.locator('#ic-error')).toBeEmpty();
+});
+
+test('standalone page on a host that answers every path with the page keeps the landing', async ({ page }) => {
+  const manifest = page.waitForResponse(r => r.url().endsWith('/imagecompare.json'));
+  await page.goto(`${baseUrl}/spa/image_compare.html`);
+  // A 200 that is an HTML page is no manifest: no comparison, and no JSON error on the landing either.
+  expect((await manifest).status()).toBe(200);
+  await publishedBootSettled(page);
+  await expect(page.locator('#ic-landing')).toBeVisible();
+  await expect(page.locator('#ic-error')).toBeEmpty();
+});
+
+test('standalone page keeps a folder the user opened while the manifest was still in flight', async ({ page }) => {
+  published.set('/slow/imagecompare.json', Buffer.from(JSON.stringify({ files: ['gt/a.png', 'pred/a.png'] })));
+  published.set('/slow/gt/a.png', makeSolidPng(4, 3, [255, 0, 0]));
+  published.set('/slow/pred/a.png', makeSolidPng(4, 3, [0, 0, 255]));
+  await page.addInitScript(() => {
+    (window as unknown as { __ic_test_enabled: boolean }).__ic_test_enabled = true;
+  });
+  await page.goto(`${baseUrl}/slow/image_compare.html`);
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    try {
+      await root.removeEntry('race', { recursive: true });
+    } catch { /* fresh profile */ }
+    await root.getDirectoryHandle('race', { create: true });
+  });
+  await writeOpfsPng(page, 'race', 'gt', 'scene_01_gt.png', 8, 6, '#f00');
+  await writeOpfsPng(page, 'race', 'pred', 'scene_01_pred.png', 5, 4, '#00f');
+  await page.evaluate(async () => {
+    const handle = await (await navigator.storage.getDirectory()).getDirectoryHandle('race');
+    await (window as unknown as { __ic_standalone: { open(h: FileSystemDirectoryHandle): Promise<void> } }).__ic_standalone.open(handle);
+  });
+  // The manifest lands ~3 s after load, long after the folder opened; it must not replace it.
+  await publishedBootSettled(page);
+  const state = await page.evaluate(
+    () => (window as unknown as { __ic_test: { getState(): Record<string, unknown> } }).__ic_test.getState(),
+  );
+  expect(state.modalityPaths).toEqual(['/race/gt', '/race/pred']);
+  expect(state.votingEnabled).toBe(true);
+});
+
+test('standalone page reports a manifest that reaches outside its directory instead of opening it', async ({ page }) => {
+  published.set('/published-bad/imagecompare.json', Buffer.from(JSON.stringify({ files: ['gt/a.png', '../secret/b.png'] })));
+  await page.goto(`${baseUrl}/published-bad/image_compare.html`);
+  await publishedBootSettled(page);
+  await expect(page.locator('#ic-error')).toContainText('imagecompare.json: not a relative path');
+  await expect(page.locator('#ic-landing')).toBeVisible();
 });
 
 // ---- External-change detection (the standalone poll) ----

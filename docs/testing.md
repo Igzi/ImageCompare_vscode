@@ -363,6 +363,16 @@ the fix, the docs, and the CI check.
   shape of a Layer-3 test that certifies nothing: it needs a real OPFS tree, a real artifact and a
   shrunk poll interval, none of which Vitest can supply, so a red run with the gate reverted is the
   only evidence it has.
+- **The published-comparison boot, by mutation.** The adapter's one `imagecompare.json` request — that
+  it is made, that a non-OK answer or an HTML page in its place leaves the landing alone, that a
+  folder opened while it is in flight wins, that each image is fetched by its encoded relative URL,
+  and that a rejected manifest is reported on the landing
+  (`docs/standalone.md: published-comparison-opens-itself`) — is pinned only by the five
+  `standalone page ...` tests in `test/webview/standalone-build.spec.ts`, which need a real server
+  and a real artifact. Each was watched failing against its own break (the boot call removed, the
+  `response.ok` check removed, the HTML check removed, the in-flight guard removed, the per-segment
+  encode removed, the landing report removed). The listing itself — what a manifest may name and how
+  each file is fetched — IS mutation-covered, in `test/unit/publishedComparison.test.ts`.
 - **The carousel's DOM shape, by mutation.** `test/webview/column-virtualization.spec.ts` asserts
   tile counts and layout — that doubling the modalities adds no DOM, that the materialized columns
   are contiguous and correctly placed, and that scrolling releases the near end as it binds the far

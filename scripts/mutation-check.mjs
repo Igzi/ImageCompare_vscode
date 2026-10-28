@@ -3051,6 +3051,38 @@ const mutations = [
     find: '    let missing = false;\n    if (!listed) {',
     replace: '    let missing = !listed;\n    if (false) {',
     killedBy: 'unreadable-root test (unreadable is not gone, and telling the user it is is a lie)'
+  },
+  {
+    name: 'published comparison: a manifest path with a .. segment is accepted (the page fetches outside its directory)',
+    file: 'standalone/fsBackends.ts',
+    suite: 'test/unit/publishedComparison.test.ts',
+    find: "s => s === '.' || s === '..' || s === ''",
+    replace: "s => s === '.' || s === ''",
+    killedBy: 'leave-the-page-directory test (a listing may only name files beside the page)'
+  },
+  {
+    name: 'published comparison: a manifest path with a . segment is accepted (the scan sees one "." column and blames the images)',
+    file: 'standalone/fsBackends.ts',
+    suite: 'test/unit/publishedComparison.test.ts',
+    find: "s => s === '.' || s === '..' || s === ''",
+    replace: "s => s === '..' || s === ''",
+    killedBy: 'leave-the-page-directory test (./gt/a.png is refused, not opened as a "." column)'
+  },
+  {
+    name: 'published comparison: an empty manifest is accepted (an empty comparison instead of the reported error)',
+    file: 'standalone/fsBackends.ts',
+    suite: 'test/unit/publishedComparison.test.ts',
+    find: '  if (!Array.isArray(files) || files.length === 0) throw',
+    replace: '  if (!Array.isArray(files)) throw',
+    killedBy: 'no-files test'
+  },
+  {
+    name: 'published comparison: files fetched by their backend path, not the manifest-relative one',
+    file: 'standalone/fsBackends.ts',
+    suite: 'test/unit/publishedComparison.test.ts',
+    find: '    arrayBuffer: () => fetchFile(path),',
+    replace: '    arrayBuffer: () => fetchFile(`comparison/${path}`),',
+    killedBy: 'relative-fetch test (the page would request comparison/<path>, which no publisher uploads)'
   }
 ];
 

@@ -59,7 +59,8 @@ Three ingredients, composed by `scripts/build-standalone.mjs`:
 3. **`standalone/adapter.ts`** (+ `standalone/fsBackends.ts`) — the IO backend: File System Access
    API directory handles (with a
    read-only fallback for Firefox/Safari, fed by the `webkitdirectory` picker *or* a drag-drop
-   walked through `webkitGetAsEntry` — voting/crop/delete disabled, since
+   walked through `webkitGetAsEntry`, and also by a published `imagecompare.json` (see
+   "Publishing a comparison") — voting/crop/delete disabled, since
    nothing can be written), browser image decode (canvas; PPMX via the real parser; TIFF degrades
    to `imageError`), results.txt read/write over FSA, crop writes over FSA, pptxgenjs from CDN fed
    by the pure deck builder, and the external-change poll loop (+ optional `FileSystemObserver`
@@ -193,6 +194,16 @@ repo whose README forbids development are worse than none, and the deploy is the
 can remove them. The Pages site serves the same page at `/standalone/`. The artifact repo is
 generated-only: it is never edited by hand, and the README it receives says so at the top.
 
+**Publishing a comparison.** The same page, uploaded unmodified next to an `imagecompare.json` and
+the images it lists (any static host: a Claude artifact, GitHub Pages, `python3 -m http.server`),
+opens that comparison by itself instead of the landing. The manifest is only a directory listing —
+`{"files": ["gt/scene_01.png", "pred/scene_01.png", ...]}`, paths relative to the page — that stands
+in for the folder a user would otherwise drop: `createPublishedBackend` feeds it to the same
+read-only FileList backend the Firefox/Safari picker uses, each image is fetched by relative URL
+on first read, and columns, matching, naming and order are the shared scanner's, exactly as for
+that dropped folder. A page with no manifest beside it (`file://`, the Pages copy, a 404) shows the
+landing as before. `skills/imagecompare-artifact/SKILL.md` is the agent-facing recipe.
+
 ## Invariants
 
 - **`adapter-contains-no-logic`** — the adapter implements IO (list, read, write, decode, save
@@ -284,4 +295,14 @@ generated-only: it is never edited by hand, and the README it receives says so a
 - **`standalone-single-file`** — the built page is one `.html` with everything inlined; its only
   network dependency is the pptxgenjs CDN script, loaded lazily on first export. A build that
   emits sidecar files or adds network dependencies breaks the artifact's only deployment story
-  (download one file, open it).
+  (download one file, open it). A published comparison's `imagecompare.json` and images are data
+  the page reads from its own directory (`published-comparison-opens-itself`), never code it needs.
+- **`published-comparison-opens-itself`** — on load the page makes exactly one request for
+  `imagecompare.json` in its own directory. Absent or unreachable (any non-OK response, an HTML page
+  in its place as from a host that rewrites every path to one page, or a throwing fetch as on
+  `file://`), the landing is left exactly as it was; present, it opens a **read-only** comparison of
+  exactly the listed files, each fetched by its relative URL, unless the user has already opened a
+  folder, which wins. A manifest that is not a non-empty list of relative paths inside the page's
+  directory is reported on the landing rather than opened. The manifest is a listing, not a configuration: what the files mean
+  (columns, tuples, names, order) is decided by the shared scanner the dropped-folder path uses, so
+  a published comparison can never be laid out differently from the same folder opened locally.

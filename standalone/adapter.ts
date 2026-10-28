@@ -1,6 +1,6 @@
 /** Standalone IO backend + protocol host for the real webview bundle: it decides nothing — matching, naming, ordering, results format, crop math and deck layout are imports (docs/standalone.md: adapter-contains-no-logic). */
 import { FileType, Uri, setStandaloneFs, StandaloneFs } from './shims/vscode';
-import { createDroppedEntryBackend, createFsaBackend, createFileListBackend, OpenedRoot } from './fsBackends';
+import { createDroppedEntryBackend, createFsaBackend, createFileListBackend, createPublishedBackend, OpenedRoot, parsePublishedManifest } from './fsBackends';
 import { scanForImages, mapWinnersToIndices, RESULTS_FILENAME } from '../src/fileService';
 import { parseResults, persistResults } from '../src/resultsFile';
 import { passthroughMime } from '../src/imageMime';
@@ -1085,5 +1085,34 @@ const seam = {
   open: (handle: FileSystemDirectoryHandle) => openRoot(createFsaBackend(handle)),
   // The drop handler's non-FSA branch, exposed because a synthetic DataTransfer cannot carry entries.
   openDroppedEntry: async (entry: FileSystemDirectoryEntry) => openRoot(await createDroppedEntryBackend(entry)),
+  // Settles once the published-comparison boot has opened, reported, or found nothing beside the page.
+  booted: openPublishedComparison(),
 };
 (window as unknown as { __ic_standalone: unknown }).__ic_standalone = seam;
+
+/** One relative GET per published image; a missing one fails its own slot like any unreadable file (docs/standalone.md: published-comparison-opens-itself). */
+async function fetchPublishedFile(path: string): Promise<ArrayBuffer> {
+  const response = await fetch(path.split('/').map(encodeURIComponent).join('/'));
+  if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+  return response.arrayBuffer();
+}
+
+/** A page uploaded next to an imagecompare.json opens that comparison; without one the landing stays (docs/standalone.md: published-comparison-opens-itself). */
+async function openPublishedComparison(): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch('imagecompare.json', { cache: 'no-cache' });
+  } catch {
+    return;
+  }
+  // A host that answers every path with an HTML page (SPA fallback) has no manifest either.
+  if (!response.ok || /text\/html/i.test(response.headers.get('content-type') ?? '')) return;
+  try {
+    const files = parsePublishedManifest(await response.text());
+    // A folder the user opened while the manifest was in flight wins.
+    if (state) return;
+    await openRoot(createPublishedBackend(files, fetchPublishedFile));
+  } catch (err) {
+    showLandingError(err);
+  }
+}
