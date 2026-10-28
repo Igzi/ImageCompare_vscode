@@ -566,6 +566,13 @@ async function scanFiles(uris: vscode.Uri[]): Promise<ScanResult> {
   })));
 }
 
+/** Which of a folder's loose images its enumeration keeps; shared with the sharing script, which must stage a file list the page reads back whole (docs/session-files.md: folder-of-images-is-a-file-list). */
+export function enumeratedImages<T extends { name: string }>(files: T[]): T[] {
+  const withoutCrops = files.filter(file => !CROP_SUFFIX_RE.test(stripExtension(file.name)));
+  const chosen = withoutCrops.length >= MODES[3].minColumns ? withoutCrops : files;
+  return chosen;
+}
+
 /**
  * A directory's own images read as a mode-3 file list. `_cropNN` outputs are this app's own writes:
  * they interleave with the parents they were cut from, so enumeration drops them — unless that
@@ -573,8 +580,7 @@ async function scanFiles(uris: vscode.Uri[]): Promise<ScanResult> {
  * (docs/session-files.md: folder-of-images-is-a-file-list) (docs/crop-and-pptx.md: cropnn-writer-reader-match).
  */
 function scanEnumeratedFiles(files: Array<{ name: string; uri: vscode.Uri }>): ScanResult {
-  const withoutCrops = files.filter(file => !CROP_SUFFIX_RE.test(stripExtension(file.name)));
-  const chosen = withoutCrops.length >= MODES[3].minColumns ? withoutCrops : files;
+  const chosen = enumeratedImages(files);
   if (chosen.length < MODES[3].minColumns) {
     throw new Error('This directory holds one image; a comparison needs at least 2.');
   }

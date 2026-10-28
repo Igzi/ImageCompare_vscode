@@ -34,6 +34,8 @@ let baseUrl: string;
 // as on a real static host, so pages without one keep their landing — except under /spa/, which
 // mimics a host that answers every path with the page itself.
 const published = new Map<string, Buffer>();
+// Every path the server was asked for, in order — how a test proves a file was (or was never) fetched.
+const requested: string[] = [];
 
 test.beforeAll(async () => {
   // The artifact is built ONCE by globalSetup (test/webview/standaloneArtifact.ts); every worker
@@ -43,6 +45,7 @@ test.beforeAll(async () => {
   const html = fs.readFileSync(ARTIFACT);
   server = http.createServer((req, res) => {
     const url = decodeURIComponent((req.url ?? '/').split('?')[0]);
+    requested.push(`${req.method} ${url}`);
     const data = published.get(url);
     if (data) {
       res.setHeader('Content-Type', url.endsWith('.json') ? 'application/json' : 'image/png');
@@ -50,7 +53,8 @@ test.beforeAll(async () => {
       setTimeout(() => res.end(data), url.startsWith('/slow/') ? 3000 : 0);
       return;
     }
-    if ((url.endsWith('/imagecompare.json') && !url.startsWith('/spa/')) || (url.startsWith('/published/') && !url.endsWith('.html'))) {
+    // A real static host 404s anything it does not hold; only /spa/ answers every path with the page.
+    if (!url.endsWith('.html') && !url.startsWith('/spa/')) {
       res.statusCode = 404;
       res.end();
       return;
@@ -162,6 +166,10 @@ test('standalone build boots the real webview and matches via the real scanForIm
   expect(state.currentTupleName).toBe('scene_01');
   expect(state.modalityPaths).toEqual(['/fixtures/gt', '/fixtures/pred']);
   expect(state.votingEnabled).toBe(true);
+  // A File System Access root deletes everything it holds, and can hand over a downloaded deck.
+  await expect(page.locator('#delete-btn')).toBeEnabled();
+  await expect(page.locator('#pptx-btn')).toBeVisible();
+  await expect(page.locator('#results-btn')).toBeHidden();
 
   // The first tuple's image really renders (the adapter answered requestImage with decodable bytes).
   await page.waitForFunction(() => {
@@ -429,6 +437,8 @@ test('standalone no-FSA drop path walks webkit entries into the read-only backen
   expect(state.modalityPaths).toEqual(['/dropped/gt', '/dropped/pred']);
   // webkitGetAsEntry drops are read-only: no directory handle, so nothing can be written.
   expect(state.votingEnabled).toBe(false);
+  // ...and Delete says so rather than doing nothing silently (docs/standalone.md: published-originals-never-written).
+  await expect(page.locator('#delete-btn')).toBeDisabled();
 
   // The dropped images actually decode and render.
   await page.waitForFunction(() => {
@@ -447,7 +457,7 @@ async function publishedBootSettled(page: import('@playwright/test').Page): Prom
   await page.evaluate(() => (window as unknown as { __ic_standalone: { booted: Promise<void> } }).__ic_standalone.booted);
 }
 
-test('standalone page published next to an imagecompare.json opens that comparison read-only', async ({ page }) => {
+test('standalone page published next to an imagecompare.json opens that comparison, its listed files read-only', async ({ page }) => {
   // Same fixture names as the FSA and drop paths (no exact basename matches); the second row's gt file
   // carries a '#', which only a per-segment URL encode keeps from being read as a fragment.
   const files: Record<string, Buffer> = {
@@ -477,8 +487,10 @@ test('standalone page published next to an imagecompare.json opens that comparis
   expect(state.modalityCount).toBe(2);
   expect(state.currentTupleName).toBe('scene_01');
   expect(state.modalityPaths).toEqual(['/comparison/gt', '/comparison/pred']);
-  // Nothing beside a published page can be written: read-only, like the Firefox/Safari folder.
-  expect(state.votingEnabled).toBe(false);
+  // The listed files are read-only, but a viewer layer takes the viewer's own writes, so voting is on
+  // (docs/standalone.md, "The viewer layer"); a manifest naming no host is a plain static host.
+  expect(state.votingEnabled).toBe(true);
+  expect(state.capabilities).toMatchObject({ exportPptx: true, copyResults: true });
 
   // Each image is fetched by its relative URL and decoded at its real size, the '#' one included.
   const canvasIs = (w: number, h: number) => page.waitForFunction(([w, h]) => {
@@ -547,6 +559,237 @@ test('standalone page reports a manifest that reaches outside its directory inst
   await publishedBootSettled(page);
   await expect(page.locator('#ic-error')).toContainText('imagecompare.json: not a relative path');
   await expect(page.locator('#ic-landing')).toBeVisible();
+});
+
+// ---- Publishing a comparison: hosting regimes, the viewer layer, packed thumbs (docs/standalone.md) ----
+// Outside the Vitest-only mutation harness (docs/testing.md, "What nothing covers"): the decisions
+// these drive — the regime table, the manifest's host/thumbs, the layer's refusals, persistence and
+// namespace, the packed-thumbs fallback — are mutation-covered in test/unit/publishedComparison,
+// viewerLayer and packedThumbs; these pin the adapter's wiring of them, each watched failing
+// against its own break of standalone/adapter.ts.
+
+type IcStateLite = { tupleCount: number; currentTupleName: string | null; winners: Array<[number, number]>; votingEnabled: boolean; capabilities: Record<string, boolean>; thumbUrlsLive: number };
+
+/** Publish `files` (+ manifest fields) under /<dir>/, the page answering /<dir>/image_compare.html. */
+function publish(dir: string, files: Record<string, Buffer>, manifest: Record<string, unknown> = {}): void {
+  published.set(`/${dir}/imagecompare.json`, Buffer.from(JSON.stringify({ files: Object.keys(files), ...manifest })));
+  for (const [rel, bytes] of Object.entries(files)) published.set(`/${dir}/${rel}`, bytes);
+}
+
+const twoRows = (): Record<string, Buffer> => ({
+  'gt/scene_01_gt.png': makeSolidPng(8, 6, [255, 0, 0]),
+  'gt/scene_02_gt.png': makeSolidPng(9, 7, [0, 255, 0]),
+  'pred/scene_01_pred.png': makeSolidPng(5, 4, [0, 0, 255]),
+  'pred/scene_02_pred.png': makeSolidPng(6, 5, [255, 255, 0]),
+});
+
+async function openPublished(page: import('@playwright/test').Page, dir: string, rows = 2): Promise<void> {
+  await page.addInitScript(() => {
+    (window as unknown as { __ic_test_enabled: boolean }).__ic_test_enabled = true;
+  });
+  await page.goto(`${baseUrl}/${dir}/image_compare.html`);
+  await waitForRows(page, rows);
+}
+
+async function waitForRows(page: import('@playwright/test').Page, rows: number): Promise<void> {
+  await page.waitForFunction((n) => {
+    const t = (window as unknown as { __ic_test?: { getState(): { tupleCount: number } } }).__ic_test;
+    return !!t && t.getState().tupleCount === n;
+  }, rows);
+}
+
+const icState = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => (window as unknown as { __ic_test: { getState(): IcStateLite } }).__ic_test.getState());
+
+/** The viewer layer's IndexedDB keys — read to know a write has landed before a reload, never to judge behaviour. */
+const layerKeys = (page: import('@playwright/test').Page) => page.evaluate(() => new Promise<string[]>((resolve) => {
+  const open = indexedDB.open('imagecompare-viewer-layer', 1);
+  open.onupgradeneeded = () => open.result.createObjectStore('files');
+  open.onsuccess = () => {
+    const req = open.result.transaction('files', 'readonly').objectStore('files').getAllKeys();
+    req.onsuccess = () => { open.result.close(); resolve((req.result as string[]).map(String)); };
+  };
+}));
+
+async function navigateToRow(page: import('@playwright/test').Page, match: (name: string) => boolean): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    const name = (await icState(page)).currentTupleName ?? '';
+    if (match(name)) return;
+    await page.keyboard.press('ArrowDown');
+  }
+  throw new Error('row not found');
+}
+
+test.describe('standalone published comparison for a Claude artifact', () => {
+  test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
+
+  test('standalone published comparison keeps the viewer\'s votes across a reload and copies them out as results.txt', async ({ page }) => {
+    publish('art-votes', twoRows(), { host: 'claude-artifact' });
+    await openPublished(page, 'art-votes');
+    const state = await icState(page);
+    expect(state.votingEnabled).toBe(true);
+    expect(state.capabilities).toMatchObject({ exportPptx: false, copyResults: true });
+    // The artifact frame blocks every page-initiated download: no PPTX button to report a fake success.
+    await expect(page.locator('#pptx-btn')).toBeHidden();
+    await expect(page.locator('#results-btn')).toBeVisible();
+
+    // Nothing to copy yet: said so, and the clipboard is left alone.
+    await page.evaluate(() => navigator.clipboard.writeText('untouched'));
+    await page.locator('#results-btn').click();
+    await expect(page.locator('#copy-toast')).toHaveText('No votes to copy yet');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('untouched');
+
+    await page.locator('#viewer').click();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await icState(page)).winners).toEqual([[0, 0]]);
+    await expect.poll(async () => (await layerKeys(page)).some(k => k.endsWith('\u0000results.txt'))).toBe(true);
+
+    await page.locator('#results-btn').click();
+    await expect(page.locator('#copy-toast')).toHaveText('results.txt copied to the clipboard (1 vote)');
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    const iso = /^# Generated: (.+)$/m.exec(copied)?.[1];
+    expect(iso).toBeTruthy();
+    // Byte for byte what the shared serializer writes into results.txt.
+    expect(copied).toBe(serializeResults([{ name: 'scene_01' }, { name: 'scene_02' }], new Map([[0, 'gt']]), ['gt', 'pred'], new Date(iso!)));
+
+    // The vote lives in this browser: a reload opens with it, and nothing was ever sent anywhere.
+    await page.reload();
+    await waitForRows(page, 2);
+    await expect.poll(async () => (await icState(page)).winners).toEqual([[0, 0]]);
+    expect(requested.filter(r => r.includes('/art-votes/') && (!r.startsWith('GET ') || r.includes('results.txt')))).toEqual([]);
+  });
+
+  test('standalone published comparison keeps the viewer\'s crops across a reload and deletes them, never an original', async ({ page }) => {
+    publish('art-crops', twoRows(), { host: 'claude-artifact' });
+    await openPublished(page, 'art-crops');
+    const del = page.locator('#delete-btn');
+    // An original row: greyed, and Del does nothing.
+    await expect(del).toBeDisabled();
+    await page.locator('#viewer').click();
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(200);
+    expect((await icState(page)).tupleCount).toBe(2);
+
+    // The crop the webview posts on confirm, through the adapter's own protocol entry.
+    await page.evaluate(() => (window as unknown as { acquireVsCodeApi(): { postMessage(m: unknown): void } }).acquireVsCodeApi()
+      .postMessage({ type: 'cropImages', tupleIndex: 0, cropRect: { x: 0, y: 0, w: 4, h: 3 }, srcWidth: 8, srcHeight: 6 }));
+    await waitForRows(page, 3);
+    await expect.poll(async () => (await layerKeys(page)).filter(k => /_crop01\.png$/.test(k)).length).toBe(2);
+
+    await page.reload();
+    await waitForRows(page, 3);
+    await page.locator('#viewer').click();
+    await navigateToRow(page, n => n.includes('crop'));
+    await expect(del).toBeEnabled();
+    await page.keyboard.press('Delete');
+    await waitForRows(page, 2);
+    await expect.poll(async () => (await layerKeys(page)).filter(k => /_crop01\.png$/.test(k)).length).toBe(0);
+
+    await page.reload();
+    await waitForRows(page, 2);
+    // The originals were never touched: both still served and listed.
+    expect(requested.filter(r => r.includes('/art-crops/') && !r.startsWith('GET '))).toEqual([]);
+  });
+
+  test('standalone published comparison does not poll', async ({ page }) => {
+    await page.addInitScript(() => {
+      const delays: number[] = [];
+      (window as unknown as { __ic_intervals: number[] }).__ic_intervals = delays;
+      const realSet = window.setInterval.bind(window) as (fn: TimerHandler, ms?: number) => number;
+      (window as unknown as { setInterval: unknown }).setInterval = (fn: TimerHandler, ms?: number) => {
+        delays.push(ms ?? 0);
+        return realSet(fn, ms);
+      };
+    });
+    publish('art-nopoll', twoRows(), { host: 'claude-artifact' });
+    await openPublished(page, 'art-nopoll');
+    await page.waitForTimeout(300);
+    const { intervals, pollMs } = await page.evaluate(() => ({
+      intervals: (window as unknown as { __ic_intervals: number[] }).__ic_intervals,
+      pollMs: (window as unknown as { __ic_standalone: { pollIntervalMs: number } }).__ic_standalone.pollIntervalMs,
+    }));
+    // Writable now (the viewer layer) but nothing outside the page can change it: no poll timer.
+    expect(intervals.filter(ms => ms === pollMs)).toEqual([]);
+  });
+});
+
+test('standalone published comparisons in sibling directories keep separate votes', async ({ page }) => {
+  publish('sib-a', twoRows(), { host: 'claude-artifact' });
+  publish('sib-b', twoRows(), { host: 'claude-artifact' });
+  await openPublished(page, 'sib-a');
+  await page.locator('#viewer').click();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await icState(page)).winners).toEqual([[0, 0]]);
+  await expect.poll(async () => (await layerKeys(page)).some(k => k.endsWith('\u0000results.txt'))).toBe(true);
+
+  await page.goto(`${baseUrl}/sib-b/image_compare.html`);
+  await waitForRows(page, 2);
+  expect((await icState(page)).winners).toEqual([]);
+
+  await page.goto(`${baseUrl}/sib-a/image_compare.html`);
+  await waitForRows(page, 2);
+  await expect.poll(async () => (await icState(page)).winners).toEqual([[0, 0]]);
+});
+
+test('standalone page reports a manifest naming an unknown host instead of opening it', async ({ page }) => {
+  publish('art-unknown', twoRows(), { host: 'netlify' });
+  await page.goto(`${baseUrl}/art-unknown/image_compare.html`);
+  await publishedBootSettled(page);
+  await expect(page.locator('#ic-error')).toContainText('imagecompare.json: unknown "host": "netlify"');
+  await expect(page.locator('#ic-landing')).toBeVisible();
+});
+
+test.describe('standalone published comparison strip thumbnails', () => {
+  // Three rows; the packed thumbnails are 3x2 PNGs, so a tile's natural size tells which path drew it.
+  const threeRows = (): Record<string, Buffer> => ({
+    ...twoRows(),
+    'gt/scene_03_gt.png': makeSolidPng(7, 5, [0, 255, 255]),
+    'pred/scene_03_pred.png': makeSolidPng(4, 4, [255, 0, 255]),
+  });
+  const packed = (paths: string[]) => Buffer.from(JSON.stringify({
+    format: 'imagecompare-thumbs-1',
+    entries: Object.fromEntries(paths.map(p => [p, { mime: 'image/png', data: makeSolidPng(3, 2, [9, 9, 9]).toString('base64') }])),
+  }));
+  const tileWidths = (page: import('@playwright/test').Page) =>
+    page.$$eval('.carousel-row .carousel-thumb', imgs => imgs
+      .filter(i => (i as HTMLImageElement).src.startsWith('blob:') && (i as HTMLImageElement).naturalWidth > 0)
+      .map(i => (i as HTMLImageElement).naturalWidth));
+
+  test('standalone published comparison draws the strip from packed thumbnails without fetching the images', async ({ page }) => {
+    const files = threeRows();
+    publish('art-thumbs', files, { host: 'claude-artifact', thumbs: ['imagecompare.thumbs.0.json'] });
+    published.set('/art-thumbs/imagecompare.thumbs.0.json', packed(Object.keys(files)));
+    await openPublished(page, 'art-thumbs', 3);
+    await expect.poll(() => tileWidths(page)).toEqual([3, 3, 3, 3, 3, 3]);
+    // Only the open row's images are fetched (to show them); rows 2 and 3 never are.
+    const images = requested.filter(r => r.startsWith('GET /art-thumbs/') && r.endsWith('.png'));
+    expect(images.length).toBeGreaterThan(0);
+    for (const r of images) expect(r).toMatch(/scene_01/);
+    expect(requested).toContain('GET /art-thumbs/imagecompare.thumbs.0.json');
+  });
+
+  for (const [label, body] of [['missing', undefined], ['malformed', Buffer.from('{"format": "imagecompare-thumbs-1", "entries": ')]] as const) {
+    test(`standalone published comparison falls back to the full images when the thumbs file is ${label}`, async ({ page }) => {
+      const dir = `art-thumbs-${label}`;
+      const files = threeRows();
+      publish(dir, files, { host: 'claude-artifact', thumbs: ['imagecompare.thumbs.0.json'] });
+      if (body) published.set(`/${dir}/imagecompare.thumbs.0.json`, body);
+      await openPublished(page, dir, 3);
+      // Every tile still lands, decoded from its image at its own size, row 3's included.
+      await expect.poll(async () => (await tileWidths(page)).sort((a, b) => a - b)).toEqual([4, 5, 6, 7, 8, 9]);
+      expect(requested).toContain(`GET /${dir}/gt/scene_03_gt.png`);
+    });
+  }
+
+  test('standalone published comparison decodes an image the thumbs file has no entry for', async ({ page }) => {
+    const files = threeRows();
+    publish('art-thumbs-partial', files, { thumbs: ['imagecompare.thumbs.0.json'] });
+    published.set('/art-thumbs-partial/imagecompare.thumbs.0.json', packed(Object.keys(files).filter(p => p !== 'pred/scene_03_pred.png')));
+    await openPublished(page, 'art-thumbs-partial', 3);
+    await expect.poll(async () => (await tileWidths(page)).sort((a, b) => a - b)).toEqual([3, 3, 3, 3, 3, 4]);
+    expect(requested).toContain('GET /art-thumbs-partial/pred/scene_03_pred.png');
+    expect(requested).not.toContain('GET /art-thumbs-partial/gt/scene_03_gt.png');
+  });
 });
 
 // ---- External-change detection (the standalone poll) ----
@@ -1184,7 +1427,7 @@ test.describe('standalone context menu', () => {
     expect(await page.evaluate(() =>
       (window as unknown as { __ic_test: { getState(): { capabilities: Record<string, boolean> } } })
         .__ic_test.getState().capabilities))
-      .toEqual({ revealInExplorer: false, copyTextToClipboard: true, saveSessionAs: false });
+      .toEqual({ revealInExplorer: false, copyTextToClipboard: true, saveSessionAs: false, exportPptx: true, copyResults: false });
 
     // Hide Modality reaches the state it could never reach before.
     await page.locator('#context-menu [data-action-id="toggleHidden"]').click();

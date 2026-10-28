@@ -124,6 +124,19 @@ The Vitest and Playwright configs live next to their tests (invoked via `--confi
 | `tupleLoadScheduling` | real source | The same policy where it costs money — the real provider's message loop against the real pool: browsing six tuples leaves only the current one queued, a cancelled load never reaches the filesystem, `tail` requests queue in their own class, the sweep keeps every speculative slot, dispose leaves nothing queued |
 | `openRollup` | real source | The open-path rollup: the pure formatter's spans against hand-computed marks, the real provider emitting exactly one `[IC-OPEN]` line ahead of the sweep, where each mark is *taken* (burnt wall time must surface in `other`, never in a neighbour), what debug costs when off (the init payload is handed to `JSON.stringify` exactly once with debug on and never with it off, measured on a real open), and the handle census — node's own resource list shows the three `fs.watch` handles an open creates gone after the close, and every 10 s poll interval it started cleared |
 
+Four suites pin the published comparison and its sharing script (`docs/standalone.md`, "Publishing a
+comparison"), importing the real `standalone/` modules: `publishedComparison` (the manifest's
+`files`, `host` and `thumbs`, and the regime table's flags and limits against the contract's
+literals), `viewerLayer` (merged listings, layer-first reads, refused writes and deletes of listed
+paths, persistence across a fresh layer, namespace isolation, the in-memory fallback — over the
+in-memory store the layer takes by injection), `packedThumbs` (the format, a bad file or entry
+falling back, a file that never answers timing out, splitting within a UTF-8 byte limit) and
+`shareComparison` (layout per input shape, names made safe by the lookalike table with the
+page's own `parsePublishedManifest` reading the staged manifest, every refusal kind including a
+file list the page would read back short, the checks running before any thumbnail is built,
+batching, and the staged bytes compared with the sources — the real `sharePlan` over the real node IO and sharp, on temp copies of
+`test/fixtures/images`).
+
 Two more suites sit in the same directory and import the real shipped code via the `vscode` mock
 alias: `test/unit/tupleMatching.test.ts` pins trie matching end to end (crop
 deprioritization, each tie-break in isolation, nested crops, matcher key order, the final row order
@@ -373,6 +386,18 @@ the fix, the docs, and the CI check.
   `response.ok` check removed, the HTML check removed, the in-flight guard removed, the per-segment
   encode removed, the landing report removed). The listing itself — what a manifest may name and how
   each file is fetched — IS mutation-covered, in `test/unit/publishedComparison.test.ts`.
+- **The published comparison's wiring and affordances, by mutation.** That the adapter states the
+  regime row's flags, answers `copyResults` inside the click, wraps the published backend in an
+  IndexedDB-backed layer namespaced by the manifest's directory, flags listed images `readOnly`,
+  never polls a published root, and serves packed thumbnails with the full-image fallback — and that
+  the webview hides PPTX, shows results.txt and greys Delete from those flags — is pinned only by the
+  `standalone published comparison ...` tests in `test/webview/standalone-build.spec.ts` (plus the
+  unknown-host landing test) and by `test/webview/published-affordances.spec.ts`. Each was watched
+  failing against its own break of `standalone/adapter.ts` or `src/webview/main.ts`; one did not
+  discriminate a single site and says so in its header (the structural-change test survives removing
+  either one of the two refresh sites, since both re-decide). The rules underneath — the table, the
+  manifest fields, the layer, the namespace, the packed-thumbs fallback, the `readOnly` payload and
+  the sharing script's every refusal — are mutation-covered in the four suites above.
 - **The carousel's DOM shape, by mutation.** `test/webview/column-virtualization.spec.ts` asserts
   tile counts and layout — that doubling the modalities adds no DOM, that the materialized columns
   are contiguous and correctly placed, and that scrolling releases the near end as it binds the far

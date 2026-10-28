@@ -3054,7 +3054,7 @@ const mutations = [
   },
   {
     name: 'published comparison: a manifest path with a .. segment is accepted (the page fetches outside its directory)',
-    file: 'standalone/fsBackends.ts',
+    file: 'standalone/publishedPath.ts',
     suite: 'test/unit/publishedComparison.test.ts',
     find: "s => s === '.' || s === '..' || s === ''",
     replace: "s => s === '.' || s === ''",
@@ -3062,7 +3062,7 @@ const mutations = [
   },
   {
     name: 'published comparison: a manifest path with a . segment is accepted (the scan sees one "." column and blames the images)',
-    file: 'standalone/fsBackends.ts',
+    file: 'standalone/publishedPath.ts',
     suite: 'test/unit/publishedComparison.test.ts',
     find: "s => s === '.' || s === '..' || s === ''",
     replace: "s => s === '..' || s === ''",
@@ -3083,6 +3083,310 @@ const mutations = [
     find: '    arrayBuffer: () => fetchFile(path),',
     replace: '    arrayBuffer: () => fetchFile(`comparison/${path}`),',
     killedBy: 'relative-fetch test (the page would request comparison/<path>, which no publisher uploads)'
+  },
+  {
+    name: "published comparison: an init stating no capabilities claims a PPTX export",
+    file: "src/webview/contextMenuModel.ts",
+    suite: "test/unit/contextMenuModel.test.ts",
+    find: "  exportPptx: false,\n  copyResults: false,\n};",
+    replace: "  exportPptx: true,\n  copyResults: false,\n};",
+    killedBy: "no-flags test (an unstated capability is absent, never assumed)"
+  },
+  {
+    name: "published comparison: the readOnly flag never reaches the wire",
+    file: "src/initPayload.ts",
+    suite: "test/unit/initPayload.test.ts",
+    find: "...(img && isReadOnly?.(tupleIndex, modality) ? { readOnly: true as const } : {}),",
+    replace: "...({}),",
+    killedBy: "readOnly test (a listed original would offer a Delete that fails)"
+  },
+  {
+    name: "published comparison: a placeholder slot is flagged readOnly",
+    file: "src/initPayload.ts",
+    suite: "test/unit/initPayload.test.ts",
+    find: "...(img && isReadOnly?.(tupleIndex, modality) ?",
+    replace: "...(isReadOnly?.(tupleIndex, modality) ?",
+    killedBy: "readOnly test (a missing file is no file: never flagged, never asked about)"
+  },
+  {
+    name: "published comparison: an unknown host is defaulted instead of reported",
+    file: "standalone/fsBackends.ts",
+    suite: "test/unit/publishedComparison.test.ts",
+    find: "  if (host !== undefined && !isHostRegimeName(host)) throw",
+    replace: "  if (false && !isHostRegimeName(host)) throw",
+    killedBy: "unknown-host test (a guessed regime could offer an export its host blocks)"
+  },
+  {
+    name: "published comparison: an empty thumbs list is accepted",
+    file: "standalone/fsBackends.ts",
+    suite: "test/unit/publishedComparison.test.ts",
+    find: "(!Array.isArray(thumbs) || thumbs.length === 0)",
+    replace: "!Array.isArray(thumbs)",
+    killedBy: "thumbs-list test (validated exactly like files)"
+  },
+  {
+    name: "published comparison: thumbs paths may leave the page directory",
+    file: "standalone/fsBackends.ts",
+    suite: "test/unit/publishedComparison.test.ts",
+    find: "  if (thumbs !== undefined) assertRelativePaths(thumbs);",
+    replace: "  /* mutated: thumbs paths unchecked */",
+    killedBy: "thumbs-list test (../t.json, /t.json, a URL are refused)"
+  },
+  {
+    name: "published comparison: the claude-artifact regime offers PPTX",
+    file: "standalone/hostRegimes.ts",
+    suite: "test/unit/publishedComparison.test.ts",
+    find: "capabilities: { exportPptx: false, copyResults: true },",
+    replace: "capabilities: { exportPptx: true, copyResults: true },",
+    killedBy: "regime-flags test (an export the frame blocks would report success with nothing saved)"
+  },
+  {
+    name: "published comparison: a prototype key passes as a regime name",
+    file: "standalone/hostRegimes.ts",
+    suite: "test/unit/publishedComparison.test.ts",
+    find: "Object.prototype.hasOwnProperty.call(HOST_REGIMES, name)",
+    replace: "name in HOST_REGIMES",
+    killedBy: "unknown-host test (\"constructor\" and \"__proto__\" are no regimes)"
+  },
+  {
+    name: "published comparison: the viewer layer writes over a listed file",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "      refuseListed(path);\n      const bytes = content.slice();",
+    replace: "      const bytes = content.slice();",
+    killedBy: "refuses-to-write test (docs/standalone.md: published-originals-never-written)"
+  },
+  {
+    name: "published comparison: the viewer layer deletes a listed file",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "      refuseListed(path);\n      if (!layer.delete(path))",
+    replace: "      if (!layer.delete(path))",
+    killedBy: "refuses-to-delete test (a listed delete must say read-only, not \"no such file\")"
+  },
+  {
+    name: "published comparison: reads prefer the listing over the layer",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "readFile: async path => layer.get(path)?.slice() ?? base.fs.readFile(path),",
+    replace: "readFile: async path => (listedPaths.has(path) ? undefined : layer.get(path)?.slice()) ?? base.fs.readFile(path),",
+    killedBy: "prefers-the-layer test"
+  },
+  {
+    name: "published comparison: the viewer layer forgets its writes on reload",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "      await persist(() => store.put(namespace, path.substring(prefix.length), bytes));",
+    replace: "      void 0;",
+    killedBy: "reload test (votes and crops must survive a reload)"
+  },
+  {
+    name: "published comparison: the layer namespace is the whole origin",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "  return url.href.substring(0, url.href.lastIndexOf('/') + 1);",
+    replace: "  return `${url.origin}/`;",
+    killedBy: "namespace test (two comparisons on one origin would share votes)"
+  },
+  {
+    name: "published comparison: every path reads as read-only",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "isReadOnly: path => listedPaths.has(path) }",
+    replace: "isReadOnly: () => true }",
+    killedBy: "read-only-flag test (the viewer could never delete its own crops)"
+  },
+  {
+    name: "published comparison: a refusing store breaks the comparison",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "  } catch {\n    persistent = false;\n  }",
+    replace: "  } catch {\n    throw new Error('storage refused');\n  }",
+    killedBy: "memory-fallback test (a private window must still vote for the visit)"
+  },
+  {
+    name: "published comparison: one bad thumbs file fails the whole load",
+    file: "standalone/packedThumbs.ts",
+    suite: "test/unit/packedThumbs.test.ts",
+    find: "    if (result.status !== 'fulfilled') continue;",
+    replace: "    if (result.status !== 'fulfilled') throw result.reason;",
+    killedBy: "drop-a-bad-file test (docs/standalone.md: packed-thumbs-never-required)"
+  },
+  {
+    name: "published comparison: a thumbs file that never answers stalls the strip",
+    file: "standalone/packedThumbs.ts",
+    suite: "test/unit/packedThumbs.test.ts",
+    find: "    const timer = setTimeout(() => reject(new Error(`${path}: timed out`)), timeoutMs);",
+    replace: "    const timer = setTimeout(() => undefined, timeoutMs);",
+    killedBy: "never-answers test (times out instead of passing)"
+  },
+  {
+    name: "sharing script: thumbs files ignore the text-file limit",
+    file: "standalone/packedThumbs.ts",
+    suite: "test/unit/packedThumbs.test.ts",
+    find: "    if (maxBytes !== null && size + added > maxBytes) flush();",
+    replace: "    /* mutated: never split */",
+    killedBy: "split test (every thumbs file within the limit)"
+  },
+  {
+    name: "sharing script: a thumbnail too big for any file is dropped silently",
+    file: "standalone/packedThumbs.ts",
+    suite: "test/unit/packedThumbs.test.ts",
+    find: "      oversized.push(entry.path);\n      continue;",
+    replace: "      continue;",
+    killedBy: "oversized test (reported, never dropped)"
+  },
+  {
+    name: "sharing script: loose images win over image subdirectories",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (columns.length > 0) return columns;",
+    replace: "  if (false) return columns;",
+    killedBy: "column-folder layout test (the extension reads a folder of columns as columns)"
+  },
+  {
+    name: "sharing script: session labels ignored",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "      const column = dir.label ?? derived;",
+    replace: "      const column = derived;",
+    killedBy: "labelled-session test"
+  },
+  {
+    name: "sharing script: a flat basename collision overwrites",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (collisions.length > 0) {",
+    replace: "  if (false) {",
+    killedBy: "file-list collision test"
+  },
+  {
+    name: "sharing script: types the host does not serve are staged",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (unserved.length > 0) {",
+    replace: "  if (false) {",
+    killedBy: "unserved-types test (docs/standalone.md: pack-refuses-never-alters)"
+  },
+  {
+    name: "sharing script: the file count leaves out the page, manifest and thumbs",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (files.length > limits.maxFilesPerVersion) {",
+    replace: "  if (images.length > limits.maxFilesPerVersion) {",
+    killedBy: "per-version file-count test"
+  },
+  {
+    name: "sharing script: a refused comparison is staged anyway",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (violations.length > 0) throw new ShareRefusal(violations);",
+    replace: "  if (false) throw new ShareRefusal(violations);",
+    killedBy: "thumbs-push-over test (the post-thumbnail check is the one that sees the thumbs files)"
+  },
+  {
+    name: "sharing script: a non-empty --out is staged into",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (outKind === 'dir' && (await io.list(options.out)).length > 0) early.push(",
+    replace: "  if (false) early.push(",
+    killedBy: "non-empty --out test"
+  },
+  {
+    name: "sharing script: a failed stage leaves its files behind",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "    if (createdOut) await io.removeTree(options.out).catch(() => undefined);",
+    replace: "    if (false) await io.removeTree(options.out).catch(() => undefined);",
+    killedBy: "staging-failure test"
+  },
+  {
+    name: "sharing script: thumbnails at the strip size, not twice it",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "THUMBNAIL_SIZE * 2, mime, THUMBNAIL_JPEG_QUALITY",
+    replace: "THUMBNAIL_SIZE, mime, THUMBNAIL_JPEG_QUALITY",
+    killedBy: "thumbnail-size test (200 px longest side)"
+  },
+  {
+    name: "sharing script: limits not taken from the named regime",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  const limits = hostRegime(options.host).limits;",
+    replace: "  const limits = hostRegime('static').limits;",
+    killedBy: "refusal tests (docs/standalone.md: host-regime-is-one-table)"
+  },
+  {
+    name: "sharing script: batches ignore the per-publish byte cap",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "(current.length + 1 > limits.maxFilesPerPublish || bytes + f.bytes > limits.maxBytesPerPublish)",
+    replace: "(current.length + 1 > limits.maxFilesPerPublish)",
+    killedBy: "batching test (every batch within 64 MB)"
+  },
+  {
+    name: "sharing script: the page, manifest and thumbs do not lead batch 0",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  const ordered = [...files.filter(f => f.kind !== 'image'), ...files.filter(f => f.kind === 'image')];",
+    replace: "  const ordered = [...files];",
+    killedBy: "batching test (batch 0 carries the page, manifest and thumbs)"
+  },
+  {
+    name: "sharing script: images re-encoded instead of copied",
+    file: "standalone/shareNodeIo.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  copyFile: (from, to) => copyFile(from, to),",
+    replace: "  copyFile: async (from, to) => { await sharp(from).toFile(to); },",
+    killedBy: "byte-for-byte staging test (docs/standalone.md: pack-refuses-never-alters)"
+  },
+  {
+    name: "sharing script: small images enlarged into thumbnails",
+    file: "standalone/shareNodeIo.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "withoutEnlargement: true",
+    replace: "withoutEnlargement: false",
+    killedBy: "thumbnail test (a 50x30 PNG stays 50x30)"
+  },
+  {
+    name: "sharing script: staged paths not checked against the page's listing rule",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "    if (!isPublishedPath(img.path)) out.push(",
+    replace: "    if (false) out.push(",
+    killedBy: "unopenable-paths test (a path the page refuses would stage and report success)"
+  },
+  {
+    name: "sharing script: the colon lookalike dropped from the table",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  ':': '\\uA789',\n",
+    replace: "",
+    killedBy: "colon-label test (a \"Model: A\" label must stage under its lookalike, and the page must open it)"
+  },
+  {
+    name: "sharing script: a trailing dot or space passes as a safe name",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: " || /[. ]$/.test(safe)) return null;",
+    replace: ") return null;",
+    killedBy: "unsafe-label test (refused, naming the label to change)"
+  },
+  {
+    name: "sharing script: a file list the page would read back short is staged",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (dropped.length > 0) return [",
+    replace: "  if (false) return [",
+    killedBy: "file-list _cropNN test (docs/session-files.md: folder-of-images-is-a-file-list)"
+  },
+  {
+    name: "sharing script: the checks run after the thumbnails are built",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (before.length > 0) throw new ShareRefusal(before);",
+    replace: "  if (false) throw new ShareRefusal(before);",
+    killedBy: "refuses-before-any-thumbnail test"
   }
 ];
 

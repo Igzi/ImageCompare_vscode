@@ -39,23 +39,32 @@ want voting, crop or delete.
 
 ## Publish a comparison
 
-To share a comparison as a web page — a Claude artifact, GitHub Pages, any static host — upload
-`image_compare.html` unmodified into the comparison folder (one subdirectory per column, as above)
-together with an `imagecompare.json` that lists the images, paths relative to the page:
-
-```json
-{ "files": ["01_input/scene_001.webp", "02_model/scene_001.webp"] }
-```
-
-The page then opens that comparison by itself, read-only. One command writes the listing, run in
-the folder:
+To share a comparison as a web page — a Claude artifact, GitHub Pages, any static host — stage it
+with the sharing script in [toshas/ImageCompare_vscode](https://github.com/toshas/ImageCompare_vscode)
+(after `npm ci`), from a comparison folder (one subdirectory per column, as above) or a
+`.imagecompare` session:
 
 ```bash
-python3 -c "import json,pathlib; print(json.dumps({'files': sorted(p.as_posix() for p in pathlib.Path('.').glob('*/*') if p.is_file())}))" > imagecompare.json
+node scripts/share-comparison.mjs <folder | session.imagecompare> --out <dir> [--host claude-artifact|static] [--title <name>]
 ```
 
-Opened from disk (`file://`) the page cannot read its neighbours and shows the folder picker; serve
-the folder instead (`python3 -m http.server`). Agents: see the `imagecompare-artifact` skill in
+It stages `image_compare.html` unmodified but for its title, an `imagecompare.json` listing the
+images (paths relative to the page) and naming the host, every image byte for byte, prebuilt strip
+thumbnails, and a `publish-plan.json` that splits the upload into batches the host accepts. A
+comparison the host would refuse (image types it does not serve, size or count limits) is reported in
+full and nothing is staged; the script never re-encodes, resizes or drops an image to make it fit.
+
+```json
+{ "files": ["01_input/scene_001.png", "02_model/scene_001.png"], "host": "claude-artifact",
+  "thumbs": ["imagecompare.thumbs.0.json"] }
+```
+
+Uploaded as staged, the page opens that comparison by itself. Its images are read-only; each viewer's
+votes and crops are kept in their own browser, and the **results.txt** button copies the votes to the
+clipboard. PPTX export is offered on a static host only: a Claude artifact blocks every download a
+page starts. Opened from disk (`file://`) the page cannot read its neighbours and shows the folder
+picker; serve the folder instead (`python3 -m http.server`). Agents: see the `imagecompare-artifact`
+skill in
 [toshas/ImageCompare_vscode](https://github.com/toshas/ImageCompare_vscode/tree/main/skills/imagecompare-artifact).
 
 ## Same code as the extension

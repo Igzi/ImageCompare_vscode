@@ -1,7 +1,9 @@
 # Crop and PPTX Export
 
 How a rectangle drawn on one image becomes a set of crops across every modality, how a crop
-remembers where it came from, and how the exporter reassembles that into callout slides.
+remembers where it came from, and how the exporter reassembles that into callout slides. The PPTX
+button is offered only where the host can hand the user a file (`exportPptx` in `HostCapabilities`;
+a Claude-artifact comparison cannot — `docs/standalone.md`, "Publishing a comparison").
 
 Code: `webview/crop.ts` and `webview/main.ts` (draw + send), `cropFlow.ts` (`performCrop` — the
 whole confirm-to-`cropComplete` sequence over per-product IO), `cropPlan.ts` (`nextCropName`,
