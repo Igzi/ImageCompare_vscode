@@ -20,7 +20,8 @@ export const nodeShareIo: ShareIo = {
   size: async p => (await stat(p)).size,
   thumbnail: async (source, maxSide, mime, jpegQuality) => {
     try {
-      const resized = sharp(source).rotate().resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true });
+      // The bytes, never the path: on Windows libvips can keep a path-opened file locked (docs/testing.md, Findings).
+      const resized = sharp(await readFile(source)).rotate().resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true });
       const encoded = mime === 'image/png' ? resized.png() : resized.jpeg({ quality: jpegQuality });
       return new Uint8Array(await encoded.toBuffer());
     } catch {

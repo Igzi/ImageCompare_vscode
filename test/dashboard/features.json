@@ -3119,6 +3119,10 @@
             },
             {
               "suite": "unit",
+              "match": "hands sharp the image bytes, never its path"
+            },
+            {
+              "suite": "unit",
               "match": "refuses types the host does not serve, naming every file, and stages nothing"
             },
             {

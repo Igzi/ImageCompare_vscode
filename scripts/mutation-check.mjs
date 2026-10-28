@@ -3237,6 +3237,14 @@ const mutations = [
     killedBy: "oversized test (reported, never dropped)"
   },
   {
+    name: "sharing script: sharp handed the source path, which libvips can keep locked on Windows",
+    file: "standalone/shareNodeIo.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "sharp(await readFile(source))",
+    replace: "sharp(source)",
+    killedBy: "bytes-never-the-path test (the sharp seam judges what a POSIX runner cannot see)"
+  },
+  {
     name: "sharing script: loose images win over image subdirectories",
     file: "standalone/sharePlan.ts",
     suite: "test/unit/shareComparison.test.ts",

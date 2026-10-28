@@ -135,7 +135,8 @@ falling back, a file that never answers timing out, splitting within a UTF-8 byt
 page's own `parsePublishedManifest` reading the staged manifest, every refusal kind including a
 file list the page would read back short, the checks running before any thumbnail is built,
 batching, and the staged bytes compared with the sources — the real `sharePlan` over the real node IO and sharp, on temp copies of
-`test/fixtures/images`).
+`test/fixtures/images`; sharp is wrapped pass-through so a test can see that it is handed bytes, never
+a path — see Findings).
 
 Two more suites sit in the same directory and import the real shipped code via the `vscode` mock
 alias: `test/unit/tupleMatching.test.ts` pins trie matching end to end (crop
@@ -1234,6 +1235,23 @@ the fix, the docs, and the CI check.
   `test/helpers/providerQuiesce.ts`, and a bed holding a bare `ThumbnailService` must `await flush()`
   before its temp root goes. Both warnings sit where the next author will be standing rather than only
   here — `test/unit/pollCost.test.ts`'s `finish()` and `test/unit/jimpFallback.test.ts`'s `afterAll`.
+
+- **The sharing script handed sharp a path, and Windows kept the file locked — the fourth of the
+  class** *(fixed)* — `test/unit/shareComparison.test.ts` failed seven tests on Windows CI only, every
+  one in its `afterEach`: `EPERM: operation not permitted, unlink '…\cmp\gt\airplane.jpg'` (or
+  `'…\runs\x\s1.jpg'`), a *source* fixture. The seven were exactly the tests that thumbnail a JPEG photo;
+  the ones refused before thumbnailing were green, and so was the one that thumbnails 509 tiny PNGs by
+  path, so the lock is not on every file libvips opens by path — it was on the photos.
+  `standalone/shareNodeIo.ts` was the only `sharp(…)` call in shipped code (`src/`, `standalone/`) given
+  a file path — every other one gets bytes — while on Linux neither `/proc/self/fd` nor
+  `sharp.cache().files` shows anything held afterwards. Harmless in a
+  script that exits, it would lock the sharer's images inside a long-lived extension host. Fixed by
+  reading the bytes first; the witness judges the call at the seam, as the two `node:fs` findings
+  above do: a pass-through wrapper over the real sharp records every input, and the test fails if one
+  is a string. The same run's eighth failure was the test's own: it created file names holding
+  `: * ? " < > |` to exercise the lookalike table, which no Windows file name can hold (NTFS reads the
+  colon as a stream separator and silently creates `a`). That test now skips on Windows, where there
+  is no such name to map.
 
 ## The generated-output rule
 

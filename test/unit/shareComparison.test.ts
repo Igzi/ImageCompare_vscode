@@ -5,7 +5,7 @@
  * (standalone/shareNodeIo.ts: node fs + sharp) on temp fixtures built from test/fixtures/images.
  * scripts/share-comparison.mjs itself is argument parsing and printing over these two modules.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -24,6 +24,15 @@ import { nodeBase64, nodeShareIo } from '../../standalone/shareNodeIo';
 import { parsePackedThumbs, decodePackedThumb } from '../../standalone/packedThumbs';
 import { HOST_REGIMES } from '../../standalone/hostRegimes';
 import { makeSolidPng } from '../fixtures/synthetic';
+
+// Every input sharp is handed in this file, by a pass-through wrapper over the real sharp: what libvips
+// can do with a path on Windows (keep the file locked) cannot be seen on a POSIX runner, so the test
+// below judges the call at the seam instead, as docs/testing.md's Windows findings do for node:fs.
+const sharpInputs = vi.hoisted(() => [] as unknown[]);
+vi.mock('sharp', async importOriginal => {
+  const real = (await importOriginal<{ default: (...args: unknown[]) => unknown }>()).default;
+  return { default: Object.assign((...args: unknown[]) => { sharpInputs.push(args[0]); return real(...args); }, real) };
+});
 
 // Runtime-computed, as in publishedComparison.test.ts: fsBackends compiles under the standalone tsconfig.
 const backendsModule = '../../standalone/fsBackends';
@@ -214,6 +223,17 @@ describe('share: staging', () => {
     expect(thumbs.get('pred/tiny.png')!.mime).toBe('image/png');
   });
 
+  it('hands sharp the image bytes, never its path, so the source is free the moment its thumbnail exists', async () => {
+    const source = put('one/a.jpg', photo('airplane.jpg'));
+    sharpInputs.length = 0;
+    expect(await nodeShareIo.thumbnail(source, 200, 'image/jpeg', 80)).not.toBeNull();
+    expect(sharpInputs.length).toBeGreaterThan(0);
+    for (const input of sharpInputs) expect(typeof input).not.toBe('string');
+    // The Windows symptom itself, which only the windows-latest leg can see: the source deletes at once.
+    fs.rmSync(source);
+    expect(fs.existsSync(source)).toBe(false);
+  });
+
   it('defaults the page title to the folder name, and stages for a static host with its host named', async () => {
     const out = path.join(tmp, 'out');
     await share(columnsFolder(), out, 'static');
@@ -242,7 +262,10 @@ describe('share: names made safe with lookalikes, the page\'s own rule deciding 
     expect(fs.readFileSync(path.join(out, 'Model\uA789 A', 's1.jpg')).equals(photo('airplane.jpg'))).toBe(true);
   });
 
-  it('maps every unsafe character of a file name through the one table', async () => {
+  // A Windows file name cannot hold any of these characters (NTFS even reads the colon as a stream
+  // separator and creates `a`), so there is no such name to map there; the label tests still stage
+  // lookalikes on every OS.
+  it.skipIf(process.platform === 'win32')('maps every unsafe character of a file name through the one table', async () => {
     put('cmp/gt/a:b*c?d"e<f>g|h.jpg', photo('airplane.jpg'));
     put('cmp/pred/a:b*c?d"e<f>g|h.jpg', photo('baboon.jpg'));
     const layout = await planLayout(path.join(tmp, 'cmp'), nodeShareIo);
