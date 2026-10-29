@@ -92,6 +92,25 @@ describe('share: layout as the extension reads the input', () => {
     expect(layout.images.map(i => i.path)).toEqual(['a_gt.jpg', 'a_pred.jpg']);
   });
 
+  // The page opens a staged folder with the extension's own scan, which refuses both of these;
+  // staged, they would publish a page that cannot open, or opens as a different comparison.
+  it('refuses a folder whose only image is one loose file, which the page would not open', async () => {
+    const only = put('lone/a.jpg', photo('airplane.jpg'));
+    put('lone/readme.txt', 'x');
+    expect(await refusal(planLayout(path.join(tmp, 'lone'), nodeShareIo))).toEqual([
+      `${only} is the only image in ${path.join(tmp, 'lone')}; a comparison needs at least 2`,
+    ]);
+  });
+
+  it('refuses a multi-directory session with fewer than two image directories, as the extension does', async () => {
+    put('runs/x/s1.jpg', photo('airplane.jpg'));
+    put('runs/y/notes.md', 'x');
+    put('s.imagecompare', JSON.stringify({ paths: ['runs/x', 'runs/y'] }));
+    expect(await refusal(planLayout(path.join(tmp, 's.imagecompare'), nodeShareIo))).toEqual([
+      `Only 1 of the session's directories holds images, and a comparison of directories needs at least 2; without images: ${path.join(tmp, 'runs/y')}`,
+    ]);
+  });
+
   it('resolves a one-directory session as that folder, named after the session', async () => {
     columnsFolder();
     put('one.imagecompare', JSON.stringify({ paths: ['cmp'] }));
@@ -120,7 +139,7 @@ describe('share: layout as the extension reads the input', () => {
     expect(layout.images.map(i => i.path)).toEqual(['model_a/s1.jpg', 'model_b/s1.jpg']);
   });
 
-  // Amendment A1: a derived name that is not one path segment is made one with the lookalike table.
+  // A derived name that is not one path segment is made one with the lookalike table (docs/standalone.md, "The sharing script").
   it('stages colliding-tail directories under their derived names, the slash made a lookalike', async () => {
     put('a/pred/s1.jpg', photo('airplane.jpg'));
     put('b/pred/s1.jpg', photo('baboon.jpg'));
@@ -249,7 +268,7 @@ describe('share: staging', () => {
   });
 });
 
-describe('share: names made safe with lookalikes, the page\'s own rule deciding (Amendment A1)', () => {
+describe('share: names made safe with lookalikes, the page\'s own rule deciding', () => {
   it('stages a label with a colon under its lookalike, and the staged manifest opens in the page', async () => {
     put('runs/x/s1.jpg', photo('airplane.jpg'));
     put('runs/y/s1.jpg', photo('baboon.jpg'));
@@ -283,12 +302,44 @@ describe('share: names made safe with lookalikes, the page\'s own rule deciding 
     expect(fs.existsSync(out)).toBe(false);
   });
 
+  it('refuses a label holding a control character, which no lookalike replaces', async () => {
+    put('runs/x/s1.jpg', photo('airplane.jpg'));
+    put('runs/y/s1.jpg', photo('baboon.jpg'));
+    put('s.imagecompare', JSON.stringify({ paths: ['runs/x', 'runs/y'], labels: ['a\u0007b', 'base'] }));
+    const v = await refusal(planLayout(path.join(tmp, 's.imagecompare'), nodeShareIo));
+    expect(v).toEqual([`${path.join(tmp, 'runs/x/s1.jpg')}: the column name "a\\u0007b" cannot be made a safe folder name; change the session label "a\\u0007b"`]);
+  });
+
   it('refuses two columns that would share a folder once made safe', async () => {
     put('runs/x/s1.jpg', photo('airplane.jpg'));
     put('runs/y/s1.jpg', photo('baboon.jpg'));
     put('s.imagecompare', JSON.stringify({ paths: ['runs/x', 'runs/y'], labels: ['a:b', 'a\uA789b'] }));
     const v = await refusal(planLayout(path.join(tmp, 's.imagecompare'), nodeShareIo));
     expect(v[0]).toBe('Columns "a:b" and "a\uA789b" would share the folder "a\uA789b"; change a session label');
+  });
+
+  // macOS and Windows hold `Pred` and `pred` as one folder or file, and macOS also the NFC and NFD
+  // spellings of one name: staged there, the second source would silently merge into or overwrite
+  // the first.
+  it('refuses two columns whose folders differ only in case', async () => {
+    put('runs/x/s1.jpg', photo('airplane.jpg'));
+    put('runs/y/s1.jpg', photo('baboon.jpg'));
+    put('s.imagecompare', JSON.stringify({ paths: ['runs/x', 'runs/y'], labels: ['Pred', 'pred'] }));
+    const v = await refusal(planLayout(path.join(tmp, 's.imagecompare'), nodeShareIo));
+    expect(v).toEqual(['Columns "Pred" and "pred" would share the folder "pred"; change a session label']);
+  });
+
+  it('refuses two files whose staged paths differ only in case or Unicode normalization', async () => {
+    const a = put('x/Scene.png', makeSolidPng(4, 4, [255, 0, 0]));
+    const b = put('y/scene.png', makeSolidPng(4, 4, [0, 0, 255]));
+    const c = put('x/caf\u00e9.png', makeSolidPng(4, 4, [0, 255, 0]));
+    const d = put('y/cafe\u0301.png', makeSolidPng(4, 4, [9, 9, 9]));
+    put('s.imagecompare', JSON.stringify({ paths: [a, b, c, d] }));
+    const v = await refusal(planLayout(path.join(tmp, 's.imagecompare'), nodeShareIo));
+    expect(v).toEqual([
+      `2 files would be staged at the same path Scene.png: ${a}, ${b}`,
+      `2 files would be staged at the same path caf\u00e9.png: ${c}, ${d}`,
+    ]);
   });
 
   it('names every staged path the page\'s listing rule refuses', () => {
@@ -374,6 +425,77 @@ describe('share: refuses, never alters (docs/standalone.md: pack-refuses-never-a
   });
 });
 
+describe('share: refuses an input it cannot read as a comparison', () => {
+  it('refuses an input that does not exist, or is neither a folder nor a session', async () => {
+    const missing = path.join(tmp, 'nope');
+    expect(await refusal(planLayout(missing, nodeShareIo))).toEqual([`No such file or folder: ${missing}`]);
+    const png = put('a.png', makeSolidPng(4, 4, [1, 2, 3]));
+    expect(await refusal(planLayout(png, nodeShareIo))).toEqual([`Not a folder or a .imagecompare session: ${png}`]);
+  });
+
+  it('refuses a folder with neither image subdirectories nor loose images', async () => {
+    put('empty/readme.txt', 'x');
+    expect(await refusal(planLayout(path.join(tmp, 'empty'), nodeShareIo))).toEqual([
+      `No images to share in ${path.join(tmp, 'empty')}: neither image subdirectories nor loose images`,
+    ]);
+  });
+
+  it('refuses a session that does not parse, naming the session', async () => {
+    const session = put('bad.imagecompare', '{ not json');
+    const v = await refusal(planLayout(session, nodeShareIo));
+    expect(v).toHaveLength(1);
+    expect(v[0].startsWith(`${session}: `)).toBe(true);
+  });
+
+  it('refuses a session listing no existing image or directory', async () => {
+    const session = put('s.imagecompare', JSON.stringify({ paths: [put('x/notes.txt', 'x'), path.join(tmp, 'gone.png')] }));
+    expect(await refusal(planLayout(session, nodeShareIo))).toEqual([`${session}: lists no existing images or directories`]);
+  });
+
+  it('refuses a file-list session of one image, which the page would not open', async () => {
+    const session = put('s.imagecompare', JSON.stringify({ paths: [put('x/a.png', makeSolidPng(4, 4, [1, 2, 3]))] }));
+    expect(await refusal(planLayout(session, nodeShareIo))).toEqual(['A file list needs at least 2 images; the page would not open 1']);
+  });
+
+  // No file name on Windows can hold a control character; the label test covers the column side everywhere.
+  it.skipIf(process.platform === 'win32')('refuses a file name no lookalike can make safe, never dropping the file', async () => {
+    const bad = put('cmp/gt/a\u0007.jpg', photo('airplane.jpg'));
+    put('cmp/gt/b.jpg', photo('baboon.jpg'));
+    put('cmp/pred/b.jpg', photo('peppers.jpg'));
+    expect(await refusal(planLayout(path.join(tmp, 'cmp'), nodeShareIo))).toEqual([
+      `${bad}: the file name "a\\u0007.jpg" cannot be made a safe file name`,
+    ]);
+  });
+
+  it('refuses an --out that is a file, and leaves it as it was', async () => {
+    const out = put('out.txt', 'keep');
+    expect(await refusal(share(columnsFolder(), out))).toEqual([`--out ${out} is a file, not a folder`]);
+    expect(fs.readFileSync(out, 'utf8')).toBe('keep');
+  });
+});
+
+describe('share: the script\'s modules reach no vscode module', () => {
+  // scripts/share-comparison.mjs bundles these for node with no vscode stand-in, while this suite
+  // reaches them through the vscode mock alias: only a bundle like the script's can see the import.
+  it('bundles sharePlan, shareNodeIo and hostRegimes for node without resolving vscode', async () => {
+    const esbuild = await import('esbuild');
+    const root = path.resolve(__dirname, '..', '..');
+    const result = await esbuild.build({
+      entryPoints: ['sharePlan.ts', 'shareNodeIo.ts', 'hostRegimes.ts'].map(f => path.join(root, 'standalone', f)),
+      bundle: true,
+      format: 'cjs',
+      platform: 'node',
+      target: 'node18',
+      write: false,
+      outdir: path.join(tmp, 'bundle'),
+      external: ['sharp'],
+      logLevel: 'silent',
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.outputFiles).toHaveLength(3);
+  });
+});
+
 describe('share: limits are the regime row\'s (docs/standalone.md: host-regime-is-one-table)', () => {
   const limits = HOST_REGIMES['claude-artifact'].limits;
   const page = (bytes = 300_000): StagedFile => ({ path: 'image_compare.html', bytes, kind: 'page' });
@@ -407,17 +529,22 @@ describe('share: limits are the regime row\'s (docs/standalone.md: host-regime-i
     expect(v[0]).toMatch(/^The page, manifest and thumbs files alone \(7 files, 75\.3 MB\) exceed one publish call \(255 files, 64\.0 MB\)/);
   });
 
-  it('batches within the per-publish caps, page, manifest and thumbs first, every file once in order', () => {
+  // Every publish call sends the artifact page, so each later batch carries it again, counted within the caps.
+  it('batches within the per-publish caps, page, manifest and thumbs first, the page again in every later batch, every other file once in order', () => {
     const thumbs: StagedFile = { path: 'imagecompare.thumbs.0.json', bytes: 2_000_000, kind: 'thumbs' };
     const files = [page(), manifest, thumbs, ...images(300, 400_000), ...images(1, 14_000_000).map(f => ({ ...f, path: 'c/big.png' }))];
     const batches = planBatches([...files.slice(3, 10), ...files.slice(0, 3), ...files.slice(10)], limits);
     expect(batches[0].slice(0, 3).map(f => f.path)).toEqual(['image_compare.html', 'imagecompare.json', 'imagecompare.thumbs.0.json']);
     for (const batch of batches) {
+      expect(batch[0]).toEqual({ path: 'image_compare.html', bytes: 300_000 });
       expect(batch.length).toBeLessThanOrEqual(255);
       expect(batch.reduce((n, f) => n + f.bytes, 0)).toBeLessThanOrEqual(64_000_000);
     }
-    const flat = batches.flat().map(f => f.path);
+    const flat = batches.flatMap((batch, i) => (i === 0 ? batch : batch.slice(1))).map(f => f.path);
     expect(flat).toEqual(['image_compare.html', 'imagecompare.json', 'imagecompare.thumbs.0.json', ...images(300, 0).map(f => f.path), 'c/big.png']);
+    // 254 images beside the page fill a later call to 255 files exactly; the 255th image starts another.
+    const counted = planBatches([page(10), { ...manifest, bytes: 10 }, ...images(253 + 254 + 1, 10)], limits);
+    expect(counted.map(b => b.length)).toEqual([255, 255, 2]);
     // 300 images of 0.4 MB: 120 MB plus the big one cannot fit in fewer than three calls.
     expect(batches.length).toBe(3);
     expect(planBatches(files, null)).toHaveLength(1);

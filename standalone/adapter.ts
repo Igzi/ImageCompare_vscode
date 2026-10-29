@@ -22,7 +22,7 @@ import { planThumbnails, runThumbnailSweep, SWEEP_REQUEUE, ThumbnailBytes } from
 import { SweepAimPolicy } from '../src/sweepAimPolicy';
 import { normalizeImageBytes } from '../src/wireFormat';
 import { buildInitPayload } from '../src/initPayload';
-import { nextPanelKey, poolWidth, Priority, TaskCancelled, WorkPool } from '../src/workPool';
+import { nextPanelKey, poolWidth, Priority, SubmitOptions, TaskCancelled, WorkPool } from '../src/workPool';
 import { configureDebugLog, resetDebugClock } from '../src/debugLog';
 import type PptxGenJS from 'pptxgenjs';
 import {
@@ -181,10 +181,13 @@ async function packedThumbnail(s: StandaloneState, img: ImageFile): Promise<Thum
   return bytes && entry ? { bytes: normalizeImageBytes(bytes), mime: entry.mime } : null;
 }
 
+/** The packed thumbnail, awaited before any pool slot is taken so a pack still downloading holds none; else the decode, pooled with `options` (docs/standalone.md: packed-thumbs-never-required). */
+async function thumbnailBytes(s: StandaloneState, img: ImageFile, options: SubmitOptions): Promise<ThumbnailBytes> {
+  return (await packedThumbnail(s, img)) ?? pool.submit(() => decodedThumbnail(s, img), options);
+}
+
 /** Thumbnail at the same decode target the provider uses (thumbnailSize * 2 longest side), on the provider's binary wire shape. */
-async function thumbnailBytes(s: StandaloneState, img: ImageFile): Promise<ThumbnailBytes> {
-  const packed = await packedThumbnail(s, img);
-  if (packed) return packed;
+async function decodedThumbnail(s: StandaloneState, img: ImageFile): Promise<ThumbnailBytes> {
   const bytes = await s.fs.readFile(img.uri.path);
   const dec = await decodeFile(bytes, img.name);
   const canvas = drawScaled(dec, THUMBNAIL_SIZE * 2);
@@ -208,9 +211,8 @@ function generateAllThumbnails(s: StandaloneState): Promise<void> {
   s.sweepAim.noteSweepStart(s.currentTupleIndex);
   return runThumbnailSweep(planThumbnails(s.scan.tuples, s.scan.modalities), {
     makeThumbnail: item =>
-      pool
-        // The session is the fair-share bucket, as the panel is in the provider (docs/loading-architecture.md: bulk-sweeps-share-the-pool).
-        .submit(() => thumbnailBytes(s, item.image), { priority: Priority.THUMBNAIL_BULK, key: sweepPoolKey(s), group: s.poolKey })
+      // The session is the fair-share bucket, as the panel is in the provider (docs/loading-architecture.md: bulk-sweeps-share-the-pool).
+      thumbnailBytes(s, item.image, { priority: Priority.THUMBNAIL_BULK, key: sweepPoolKey(s), group: s.poolKey })
         .catch(error => {
           // A live session's cancellation is the sweep's own re-aim drop; a re-open settles the slot silently, like the provider's disposed panel (docs/loading-architecture.md: sweep-cancels-on-reaim).
           if (error instanceof TaskCancelled) return s.closed ? null : SWEEP_REQUEUE;
@@ -237,7 +239,7 @@ async function sendThumbnails(s: StandaloneState, tupleIndices: TupleIndex[]): P
       }
       try {
         // On-demand priority, ranked above the open-time bulk sweep — the provider's class for these re-requests.
-        const thumb = await pool.submit(() => thumbnailBytes(s, img), { priority: Priority.THUMBNAIL, key: s.poolKey });
+        const thumb = await thumbnailBytes(s, img, { priority: Priority.THUMBNAIL, key: s.poolKey });
         post({ type: 'thumbnail', tupleIndex, modalityIndex: asOriginal(modalityIndex), bytes: thumb.bytes, mime: thumb.mime });
       } catch (err) {
         if (err instanceof TaskCancelled) continue;
@@ -456,7 +458,7 @@ async function handleCropImages(
         if (!img || modalityIndex < 0) continue;
         try {
           // Post-crop thumbnails at on-demand priority, the provider's class for a regenerated slot.
-          const thumb = await pool.submit(() => thumbnailBytes(s, img), { priority: Priority.THUMBNAIL, key: s.poolKey });
+          const thumb = await thumbnailBytes(s, img, { priority: Priority.THUMBNAIL, key: s.poolKey });
           post({ type: 'thumbnail', tupleIndex: asTuple(newTupleIndex), modalityIndex: asOriginal(modalityIndex), bytes: thumb.bytes, mime: thumb.mime });
         } catch (err) {
           if (err instanceof TaskCancelled) continue;
@@ -559,7 +561,23 @@ async function handleExportPptx(
   });
 }
 
-/** Put results.txt's text on the clipboard; synchronous up to writeText, so the call runs inside the click's user activation (docs/standalone.md: viewer-layer-per-comparison). */
+/** Text onto the clipboard: the async API where the context is secure, else the copy command a plain-http origin still allows; synchronous up to the write, so it runs inside the click (docs/standalone.md, "The viewer layer"). */
+function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand('copy');
+  area.remove();
+  focused?.focus();
+  return copied ? Promise.resolve() : Promise.reject(new Error('the browser refused to copy'));
+}
+
+/** Put results.txt's text on the clipboard; synchronous up to the write, so the call runs inside the click's user activation (docs/standalone.md: viewer-layer-per-comparison). */
 function handleCopyResults(s: StandaloneState): void {
   if (s.winners.size === 0) {
     postNotice({ kind: 'noVotesToCopy' });
@@ -570,7 +588,7 @@ function handleCopyResults(s: StandaloneState): void {
   const text = s.resultsText ?? serializeResults(s.scan.tuples, winnersToNames(s.winners, s.scan.modalities), s.scan.modalities);
   const failed = (e: unknown) => postNotice({ kind: 'copyResultsFailed', error: e instanceof Error ? e.message : String(e) });
   try {
-    navigator.clipboard.writeText(text).then(() => postNotice({ kind: 'resultsCopied', votes }), failed);
+    copyText(text).then(() => postNotice({ kind: 'resultsCopied', votes }), failed);
   } catch (e) {
     failed(e);
   }
@@ -584,8 +602,10 @@ async function handleMenuAction(s: StandaloneState, action: MenuActionId, ctx: M
   const tuple = ctx.section === 'image' ? s.scan.tuples[ctx.tupleIndex] : undefined;
   const img = tuple ? findImageForModality(tuple, modality) : undefined;
   const target = img ? img.uri.path : modalityPath(s, modality);
+  // A published file or column is addressed by its URL; the viewer's own crops have none, so they keep the comparison's path.
+  const text = s.published && (!img || s.isReadOnly(target)) ? publishedUrl(target.substring(s.basePath.length + 1)) : target;
   try {
-    await navigator.clipboard.writeText(target);
+    await copyText(text);
     postNotice({ kind: 'pathCopied' });
   } catch (e) {
     postNotice({ kind: 'copyPathFailed', error: e instanceof Error ? e.message : String(e) });
@@ -721,7 +741,7 @@ async function postSlotThumbnail(s: StandaloneState, tupleIndex: TupleIndex, mod
   const img = tuple && modality ? findImageForModality(tuple, modality) : undefined;
   if (!img) return;
   try {
-    const thumb = await pool.submit(() => thumbnailBytes(s, img), { priority: Priority.THUMBNAIL, key: s.poolKey });
+    const thumb = await thumbnailBytes(s, img, { priority: Priority.THUMBNAIL, key: s.poolKey });
     post({ type: 'thumbnail', tupleIndex, modalityIndex, bytes: thumb.bytes, mime: thumb.mime });
   } catch (err) {
     if (err instanceof TaskCancelled) return;
@@ -1153,9 +1173,19 @@ const seam = {
 };
 (window as unknown as { __ic_standalone: unknown }).__ic_standalone = seam;
 
+/** A published path as it is requested: each segment URI-encoded. */
+function encodedPublishedPath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+/** A published path's absolute URL, encoded as it is fetched. */
+function publishedUrl(path: string): string {
+  return new URL(encodedPublishedPath(path), location.href).href;
+}
+
 /** One relative GET per published file; a missing one fails its own slot like any unreadable file (docs/standalone.md: published-comparison-opens-itself). */
 async function fetchPublishedResponse(path: string): Promise<Response> {
-  const response = await fetch(path.split('/').map(encodeURIComponent).join('/'));
+  const response = await fetch(encodedPublishedPath(path));
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
   return response;
 }

@@ -406,8 +406,8 @@ function deleteCurrent() {
 /** The button hint and the help row say what Del will actually take here, so neither can promise the wrong unit. */
 function applyDeleteUnitToAffordances(): void {
   const what = deleteUnit === 'image' ? 'current image file' : 'current tuple files';
-  deleteBtn.setAttribute('title', `Delete ${what} (Del)`);
   helpDeleteTextEl.textContent = `Delete ${what} (permanent!)`;
+  // Forces the availability pass below to rewrite the button's title for the new unit.
   deleteGreyed = null;
   applyDeleteAvailability();
 }

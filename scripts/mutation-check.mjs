@@ -1778,18 +1778,18 @@ const mutations = [
   },
   {
     name: 'scanEnumeratedFiles: _cropNN outputs join the comparison they were cut from',
-    file: 'src/fileService.ts',
+    file: 'src/cropPlan.ts',
     suite: 'test/unit/folderScan.test.ts',
-    find: '  const withoutCrops = files.filter(file => !CROP_SUFFIX_RE.test(stripExtension(file.name)));',
+    find: '  const withoutCrops = files.filter(file => !CROP_SUFFIX_RE.test(stemOf(file.name)));',
     replace: '  const withoutCrops = files;',
     killedBy: 'crop-exclusion test (a folder of parents plus their crops opens on the parents)'
   },
   {
     name: 'scanEnumeratedFiles: the all-crops fall-back removed (a folder of crops becomes a dead end)',
-    file: 'src/fileService.ts',
+    file: 'src/cropPlan.ts',
     suite: 'test/unit/folderScan.test.ts',
-    find: '  const chosen = withoutCrops.length >= MODES[3].minColumns ? withoutCrops : files;',
-    replace: '  const chosen = withoutCrops;',
+    find: '  return withoutCrops.length >= MODES[3].minColumns ? withoutCrops : files;',
+    replace: '  return withoutCrops;',
     killedBy: 'all-crops test (excluding crops must not leave a real folder unopenable)'
   },
 
@@ -3197,6 +3197,14 @@ const mutations = [
     killedBy: "read-only-flag test (the viewer could never delete its own crops)"
   },
   {
+    name: "published comparison: one refused write stops every later write persisting",
+    file: "standalone/viewerLayer.ts",
+    suite: "test/unit/viewerLayer.test.ts",
+    find: "    return act().catch(() => undefined);",
+    replace: "    return act().catch(() => { persistent = false; });",
+    killedBy: "refused-write test (one crop over the quota must not leave later votes unsaved)"
+  },
+  {
     name: "published comparison: a refusing store breaks the comparison",
     file: "standalone/viewerLayer.ts",
     suite: "test/unit/viewerLayer.test.ts",
@@ -3264,8 +3272,8 @@ const mutations = [
     name: "sharing script: a flat basename collision overwrites",
     file: "standalone/sharePlan.ts",
     suite: "test/unit/shareComparison.test.ts",
-    find: "  if (collisions.length > 0) {",
-    replace: "  if (false) {",
+    find: "    if (sources.length > 1) problems.push(",
+    replace: "    if (false) problems.push(",
     killedBy: "file-list collision test"
   },
   {
@@ -3395,6 +3403,166 @@ const mutations = [
     find: "  if (before.length > 0) throw new ShareRefusal(before);",
     replace: "  if (false) throw new ShareRefusal(before);",
     killedBy: "refuses-before-any-thumbnail test"
+  },
+  {
+    name: "sharing script: names differing only in case are not folded",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "const folded = (name: string): string => name.normalize('NFC').toLowerCase();",
+    replace: "const folded = (name: string): string => name.normalize('NFC');",
+    killedBy: "case-only collision tests (macOS and Windows would merge Pred and pred)"
+  },
+  {
+    name: "sharing script: NFC and NFD spellings of a name are not folded",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "const folded = (name: string): string => name.normalize('NFC').toLowerCase();",
+    replace: "const folded = (name: string): string => name.toLowerCase();",
+    killedBy: "case-or-normalization collision test (macOS would merge café and café)"
+  },
+  {
+    name: "sharing script: a folder of one loose image is staged",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (loose.length < MODES[3].minColumns) throw new ShareRefusal(",
+    replace: "  if (loose.length < 1) throw new ShareRefusal(",
+    killedBy: "one-loose-image test (the page would not open it)"
+  },
+  {
+    name: "sharing script: a session with one image directory is staged as a one-column folder",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "    if (imageful < MODES[2].minColumns) {",
+    replace: "    if (imageful < 1) {",
+    killedBy: "fewer-than-two-image-directories test (the extension refuses that session)"
+  },
+  {
+    name: "sharing script: later batches leave out the page each publish call sends",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "      current = [...page];",
+    replace: "      current = [];",
+    killedBy: "batching test (every batch starts with the page, counted within the caps)"
+  },
+  {
+    name: "sharing script: the per-image limit unchecked",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  const bigImages = images.filter(f => f.bytes > limits.maxBytesPerImage);",
+    replace: "  const bigImages: StagedFile[] = [];",
+    killedBy: "per-image-limit test"
+  },
+  {
+    name: "sharing script: the per-text-file limit unchecked",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  const bigTexts = texts.filter(f => f.bytes > limits.maxBytesPerTextFile);",
+    replace: "  const bigTexts: StagedFile[] = [];",
+    killedBy: "text-file-limit test"
+  },
+  {
+    name: "sharing script: the total-size limit unchecked",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (total > limits.maxBytesPerVersion) out.push(",
+    replace: "  if (false) out.push(",
+    killedBy: "total-size test"
+  },
+  {
+    name: "sharing script: page, manifest and thumbs over one publish call by bytes pass",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (texts.length > limits.maxFilesPerPublish || textBytes > limits.maxBytesPerPublish) {",
+    replace: "  if (texts.length > limits.maxFilesPerPublish) {",
+    killedBy: "one-publish-call test (75 MB of page, manifest and thumbs)"
+  },
+  {
+    name: "sharing script: a session mixing files and directories is laid out",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (dirs.length > 0 && files.length > 0) throw new ShareRefusal(['Cannot mix files and directories in one session']);",
+    replace: "",
+    killedBy: "mixed-session test"
+  },
+  {
+    name: "sharing script: two columns made one folder by the table are staged together",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "      if (earlier !== undefined && earlier !== img.column) {",
+    replace: "      if (false) {",
+    killedBy: "share-a-folder test (the refusal names both columns and the label to change)"
+  },
+  {
+    name: "sharing script: a control character passes as a safe name",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (safe === '' || /[\\u0000-\\u001f\\u007f]/.test(safe) || /[. ]$/.test(safe)) return null;",
+    replace: "  if (safe === '' || /[. ]$/.test(safe)) return null;",
+    killedBy: "control-character label test"
+  },
+  {
+    name: "sharing script: a png named as the input is read as a session",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (kind === 'file' && input.toLowerCase().endsWith('.imagecompare')) {",
+    replace: "  if (kind === 'file') {",
+    killedBy: "not-a-folder-or-session test"
+  },
+  {
+    name: "sharing script: a folder with no images reaches the one-image check",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (loose.length === 0) throw new ShareRefusal([`No images to share in",
+    replace: "  if (false) throw new ShareRefusal([`No images to share in",
+    killedBy: "no-images folder test (an empty folder must be refused, not crash)"
+  },
+  {
+    name: "sharing script: an unparsable session escapes as a crash",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "    throw new ShareRefusal([`${sessionPath}: ${err instanceof Error ? err.message : String(err)}`]);",
+    replace: "    throw err;",
+    killedBy: "unparsable-session test"
+  },
+  {
+    name: "sharing script: a session of no existing image is laid out empty",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (flat.length === 0) throw new ShareRefusal([`${sessionPath}: lists no existing images or directories`]);",
+    replace: "",
+    killedBy: "no-existing-image session test"
+  },
+  {
+    name: "sharing script: a file list of one image is staged",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (images.length < MODES[3].minColumns) return [`A file list needs",
+    replace: "  if (false) return [`A file list needs",
+    killedBy: "one-image file-list test (the page would not open it)"
+  },
+  {
+    name: "sharing script: a file name no lookalike can fix is dropped silently",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "    if (name === null) problems.push(",
+    replace: "    if (false) problems.push(",
+    killedBy: "unsafe-file-name test (a comparison must never lose a file)"
+  },
+  {
+    name: "sharing script: an --out that is a file is staged into",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "  if (outKind === 'file') early.push(",
+    replace: "  if (false) early.push(",
+    killedBy: "out-is-a-file test"
+  },
+  {
+    name: "sharing script: a module the script bundles reaches vscode",
+    file: "standalone/sharePlan.ts",
+    suite: "test/unit/shareComparison.test.ts",
+    find: "import { enumeratedImages } from '../src/cropPlan';",
+    replace: "import { enumeratedImages } from '../src/cropPlan';\nimport '../src/fileService';",
+    killedBy: "no-vscode bundle test (the script bundles with no vscode stand-in)"
   }
 ];
 

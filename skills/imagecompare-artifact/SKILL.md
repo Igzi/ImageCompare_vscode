@@ -49,7 +49,8 @@ In a checkout of [toshas/ImageCompare_vscode](https://github.com/toshas/ImageCom
 node scripts/share-comparison.mjs <folder | session.imagecompare> --out <empty dir> [--host claude-artifact|static] [--title "<name>"]
 ```
 
-`--host` is where the page will be published: `claude-artifact` (the default) or `static` (GitHub
+The script first builds the page from the checkout (about ten seconds), so the page always matches
+the code that stages it. `--host` is where the page will be published: `claude-artifact` (the default) or `static` (GitHub
 Pages, a bucket, an intranet share, `python3 -m http.server`). The script stages into `--out`:
 `image_compare.html` (titled after the comparison), `imagecompare.json`, every image byte for byte at
 its layout path, `imagecompare.thumbs.*.json` (prebuilt strip thumbnails, so viewers do not download
@@ -65,10 +66,11 @@ not switch `--host` on your own. What to share instead is the user's decision.
 
 **As a Claude artifact.** Publishing uploads the page and every image to claude.ai; make sure the
 user means to share them. Read `publish-plan.json`: its `batches` are in order, each within what one
-publish call accepts. Publish batch 0 with `image_compare.html` as the artifact page and every other
-file in that batch as the page's supporting files, at exactly the relative paths the plan lists (the
-staged folder is the publish root). Then publish each further batch, in order, to the same artifact
-URL; files already published are kept. Give the user the link.
+publish call accepts, and each starts with `image_compare.html`. Publish every batch the same way:
+`image_compare.html` as the artifact page and every other file in that batch as the page's supporting
+files, at exactly the relative paths the plan lists (the staged folder is the publish root). Batch 0
+creates the artifact; each further batch goes, in order, to the same artifact URL, and files already
+published are kept. Give the user the link.
 
 **Anywhere else** (`--host static`). Upload the staged folder as it is and link to
 `image_compare.html`; locally, `python3 -m http.server` in the folder and open

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { parseSessionFile } from '../src/sessionFile';
 import { disambiguateDirectoryNames } from '../src/modalityNames';
 import { isImageFile } from '../src/types';
-import { enumeratedImages } from '../src/fileService';
+import { enumeratedImages } from '../src/cropPlan';
 import { MODES } from '../src/modePolicy';
 import { isPublishedPath } from './publishedPath';
 import { hostRegime, HostRegimeName, PublishLimits } from './hostRegimes';
@@ -46,12 +46,15 @@ export interface ShareLayout {
   images: LayoutImage[];
 }
 
-export const PAGE_NAME = 'image_compare.html';
-export const MANIFEST_NAME = 'imagecompare.json';
-export const PLAN_NAME = 'publish-plan.json';
-export const thumbsFileName = (index: number): string => `imagecompare.thumbs.${index}.json`;
+const PAGE_NAME = 'image_compare.html';
+const MANIFEST_NAME = 'imagecompare.json';
+const PLAN_NAME = 'publish-plan.json';
+const thumbsFileName = (index: number): string => `imagecompare.thumbs.${index}.json`;
 
 const byPath = (a: LayoutImage, b: LayoutImage) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+/** Two names folding alike are one file on macOS, which ignores case and Unicode normalization, or on Windows, which ignores case. */
+const folded = (name: string): string => name.normalize('NFC').toLowerCase();
 
 /** One image as the input names it, before its names are made safe: an optional column directory and a file name. */
 interface RawImage {
@@ -63,7 +66,7 @@ interface RawImage {
 }
 
 /** Each character unsafe in a file or folder name on some OS, or refused by the page's listing rule, and its fixed visual lookalike. */
-export const LOOKALIKES: Readonly<Record<string, string>> = {
+const LOOKALIKES: Readonly<Record<string, string>> = {
   '/': '\u2215',
   ':': '\uA789',
   '\\': '\u29F5',
@@ -76,7 +79,7 @@ export const LOOKALIKES: Readonly<Record<string, string>> = {
 };
 
 /** A name made safe by the one lookalike table, or null when no substitution can make it so (control character, empty, `.`/`..`, a trailing dot or space). */
-export function safeSegment(name: string): string | null {
+function safeSegment(name: string): string | null {
   const safe = [...name].map(c => LOOKALIKES[c] ?? c).join('');
   // eslint-disable-next-line no-control-regex
   if (safe === '' || /[\u0000-\u001f\u007f]/.test(safe) || /[. ]$/.test(safe)) return null;
@@ -108,6 +111,8 @@ async function folderLayout(dir: string, io: ShareIo): Promise<RawImage[]> {
   if (columns.length > 0) return columns;
   const loose = await imagesIn(dir, io);
   if (loose.length === 0) throw new ShareRefusal([`No images to share in ${dir}: neither image subdirectories nor loose images`]);
+  // Loose images open as a file list, which needs two (docs/session-files.md: folder-of-images-is-a-file-list).
+  if (loose.length < MODES[3].minColumns) throw new ShareRefusal([`${path.join(dir, loose[0])} is the only image in ${dir}; a comparison needs at least ${MODES[3].minColumns}`]);
   return loose.map(name => ({ source: path.join(dir, name), name }));
 }
 
@@ -129,9 +134,17 @@ async function sessionLayout(sessionPath: string, io: ShareIo): Promise<{ images
     // Named over the '/'-separated path a vscode Uri carries, so a Windows path derives the same name.
     const named = disambiguateDirectoryNames(dirs.map(d => ({ ...d, path: process.platform === 'win32' ? d.path.replace(/\\/g, '/') : d.path, source: d.path })));
     const images: RawImage[] = [];
+    const imageless: string[] = [];
     for (const { name: derived, uri: dir } of named) {
       const column = dir.label ?? derived;
-      for (const name of await imagesIn(dir.source, io)) images.push({ source: path.join(dir.source, name), column, label: dir.label, name });
+      const names = await imagesIn(dir.source, io);
+      if (names.length === 0) imageless.push(dir.source);
+      for (const name of names) images.push({ source: path.join(dir.source, name), column, label: dir.label, name });
+    }
+    // Staged, the columns would open as one folder, which runs at one column; the extension refuses the session (docs/session-files.md: mode-behaviour-is-a-table).
+    const imageful = named.length - imageless.length;
+    if (imageful < MODES[2].minColumns) {
+      throw new ShareRefusal([`Only ${imageful} of the session's directories holds images, and a comparison of directories needs at least ${MODES[2].minColumns}; without images: ${imageless.join(', ')}`]);
     }
     return { images, fileList: false };
   }
@@ -155,20 +168,23 @@ function safeLayout(raw: readonly RawImage[]): LayoutImage[] {
     }
     if (name === null || column === null) continue;
     if (column !== undefined) {
-      const earlier = columnOf.get(column);
+      const earlier = columnOf.get(folded(column));
       if (earlier !== undefined && earlier !== img.column) {
         problems.push(`Columns ${JSON.stringify(earlier)} and ${JSON.stringify(img.column)} would share the folder ${JSON.stringify(column)}${img.label !== undefined ? '; change a session label' : ''}`);
         continue;
       }
-      columnOf.set(column, img.column!);
+      columnOf.set(folded(column), img.column!);
     }
     images.push({ source: img.source, path: column === undefined ? name : `${column}/${name}` });
   }
-  const bySafePath = new Map<string, string[]>();
-  for (const img of images) bySafePath.set(img.path, [...(bySafePath.get(img.path) ?? []), img.source]);
-  const collisions = [...bySafePath].filter(([, sources]) => sources.length > 1);
-  if (collisions.length > 0) {
-    for (const [p, sources] of collisions) problems.push(`${sources.length} files would be staged at the same path ${p}: ${sources.join(', ')}`);
+  const bySafePath = new Map<string, { path: string; sources: string[] }>();
+  for (const img of images) {
+    const at = bySafePath.get(folded(img.path)) ?? { path: img.path, sources: [] };
+    at.sources.push(img.source);
+    bySafePath.set(folded(img.path), at);
+  }
+  for (const { path: p, sources } of bySafePath.values()) {
+    if (sources.length > 1) problems.push(`${sources.length} files would be staged at the same path ${p}: ${sources.join(', ')}`);
   }
   problems.push(...unopenablePaths(images));
   if (problems.length > 0) throw new ShareRefusal([...new Set(problems)]);
@@ -235,9 +251,10 @@ export function limitViolations(files: readonly StagedFile[], limits: PublishLim
   return out;
 }
 
-/** Ordered publish batches, each within the per-publish caps; the page, manifest and thumbs lead the first (null limits: one batch). */
+/** Ordered publish batches, each within the per-publish caps; the page, manifest and thumbs lead the first, and every later batch starts with the page again, since each publish call sends it (null limits: one batch). */
 export function planBatches(files: readonly StagedFile[], limits: PublishLimits | null): Array<Array<{ path: string; bytes: number }>> {
   const ordered = [...files.filter(f => f.kind !== 'image'), ...files.filter(f => f.kind === 'image')];
+  const page = files.filter(f => f.kind === 'page').map(f => ({ path: f.path, bytes: f.bytes }));
   const batches: Array<Array<{ path: string; bytes: number }>> = [];
   let current: Array<{ path: string; bytes: number }> = [];
   let bytes = 0;
@@ -245,8 +262,8 @@ export function planBatches(files: readonly StagedFile[], limits: PublishLimits 
     const full = limits && (current.length + 1 > limits.maxFilesPerPublish || bytes + f.bytes > limits.maxBytesPerPublish);
     if (full && current.length > 0) {
       batches.push(current);
-      current = [];
-      bytes = 0;
+      current = [...page];
+      bytes = page.reduce((n, p) => n + p.bytes, 0);
     }
     current.push({ path: f.path, bytes: f.bytes });
     bytes += f.bytes;

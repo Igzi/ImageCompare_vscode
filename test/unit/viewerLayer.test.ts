@@ -7,8 +7,23 @@
  * tests in test/webview/standalone-build.spec.ts.
  */
 import { describe, it, expect } from 'vitest';
-import { createViewerLayer, memoryLayerStore, viewerLayerNamespace, LayerStore } from '../../standalone/viewerLayer';
+import { createViewerLayer, viewerLayerNamespace, LayerStore } from '../../standalone/viewerLayer';
 import { FileType } from '../../standalone/shims/vscode';
+
+/** A store that lives for the test only: IndexedDB's stand-in. */
+function memoryLayerStore(): LayerStore {
+  const data = new Map<string, Map<string, Uint8Array>>();
+  const space = (namespace: string) => {
+    let m = data.get(namespace);
+    if (!m) data.set(namespace, (m = new Map()));
+    return m;
+  };
+  return {
+    load: async namespace => [...space(namespace)].map(([path, bytes]) => [path, bytes.slice()]),
+    put: async (namespace, path, bytes) => { space(namespace).set(path, bytes.slice()); },
+    remove: async (namespace, path) => { space(namespace).delete(path); },
+  };
+}
 
 // Runtime-computed, as in publishedComparison.test.ts: fsBackends compiles under the standalone tsconfig.
 const backendsModule = '../../standalone/fsBackends';
@@ -163,6 +178,29 @@ describe('viewer layer: one writable view over read-only published files', () =>
     const second = await layered(failingWrites);
     await second.root.fs.writeFile('/comparison/results.txt', bytes(6));
     expect(Array.from(await second.root.fs.readFile('/comparison/results.txt'))).toEqual([6]);
+  });
+
+  it('loses only the write the store refuses: the ones after it still survive a reload', async () => {
+    // One crop over the browser's quota must not leave every later vote and delete unsaved.
+    const store = memoryLayerStore();
+    let refuse = true;
+    const flaky: LayerStore = {
+      ...store,
+      put: async (namespace, path, data) => {
+        if (refuse) { refuse = false; throw new Error('QuotaExceededError'); }
+        return store.put(namespace, path, data);
+      },
+    };
+    const first = await layered(flaky);
+    await first.root.fs.writeFile('/comparison/gt/scene_01_crop01.png', bytes(9));
+    await first.root.fs.writeFile('/comparison/results.txt', bytes(1, 1));
+    await first.root.fs.writeFile('/comparison/pred/scene_01_crop01.png', bytes(2));
+    await first.root.fs.delete('/comparison/pred/scene_01_crop01.png');
+
+    const second = await layered(store);
+    await expect(second.root.fs.stat('/comparison/gt/scene_01_crop01.png')).rejects.toThrow();
+    expect(Array.from(await second.root.fs.readFile('/comparison/results.txt'))).toEqual([1, 1]);
+    await expect(second.root.fs.stat('/comparison/pred/scene_01_crop01.png')).rejects.toThrow();
   });
 });
 

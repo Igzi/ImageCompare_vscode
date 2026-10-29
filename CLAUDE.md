@@ -99,7 +99,7 @@ This is a VSCode extension for comparing multiple images with multiple modalitie
 - **`thumbPack.ts`** - Pure (no vscode dependency): the thumbnail packfile wire format (build/parse, uuid pairing) → `docs/image-backends.md`
 - **`wireFormat.ts`** - Pure (no vscode dependency): image payload normalization for extension→webview transfer → `docs/loading-architecture.md`
 - **`resultsFile.ts`** - Pure (no vscode dependency): `results.txt` parse/serialize plus the persist flow (empty votes delete the file), shared with the standalone build → `docs/standalone.md`
-- **`cropPlan.ts`** - Pure (no vscode dependency): `_cropNN` output naming and crop-rect scale/clamp → `docs/crop-and-pptx.md`, `docs/standalone.md`
+- **`cropPlan.ts`** - Pure (no vscode dependency): `_cropNN` output naming, crop-rect scale/clamp, and which of a folder's loose images its enumeration keeps (`enumeratedImages`, shared with the sharing script) → `docs/crop-and-pptx.md`, `docs/standalone.md`
 - **`cropFlow.ts`** - Pure (no vscode dependency): the whole crop sequence (`performCrop` — one name, relative rect, per-modality render/inject/write, arrivals, `cropComplete`, thumbnails) over per-product IO, shared with the standalone build → `docs/crop-and-pptx.md`, `docs/standalone.md`
 - **`pptxDeck.ts`** - Pure (no vscode dependency): PPTX slide selection, parent/crop pairing and layout over an injected IO, `comparison_NN` export-file numbering, and the export flow (`exportDeck` — name, build, save, exactly one answer) over per-product IO → `docs/crop-and-pptx.md`, `docs/standalone.md`
 - **`prefetchPlan.ts`** - Pure (extension-only, no vscode): what a prefetch wave speculates on — the

@@ -28,29 +28,15 @@ export function viewerLayerNamespace(manifestUrl: string): string {
   return url.href.substring(0, url.href.lastIndexOf('/') + 1);
 }
 
-/** A store that lives for the visit only — what the layer falls back to when the browser refuses storage. */
-export function memoryLayerStore(): LayerStore {
-  const data = new Map<string, Map<string, Uint8Array>>();
-  const space = (namespace: string) => {
-    let m = data.get(namespace);
-    if (!m) data.set(namespace, (m = new Map()));
-    return m;
-  };
-  return {
-    load: async namespace => [...space(namespace)].map(([path, bytes]) => [path, bytes.slice()]),
-    put: async (namespace, path, bytes) => { space(namespace).set(path, bytes.slice()); },
-    remove: async (namespace, path) => { space(namespace).delete(path); },
-  };
-}
-
+const IDB_NAME = 'imagecompare-viewer-layer';
 const IDB_STORE = 'files';
 
 /** The browser's persistent store: one IndexedDB object store, every key prefixed by its comparison's namespace. */
-export function indexedDbLayerStore(dbName = 'imagecompare-viewer-layer'): LayerStore {
+export function indexedDbLayerStore(): LayerStore {
   let db: Promise<IDBDatabase> | undefined;
   const open = (): Promise<IDBDatabase> => {
     db ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open(dbName, 1);
+      const request = indexedDB.open(IDB_NAME, 1);
       request.onupgradeneeded = () => request.result.createObjectStore(IDB_STORE);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));
@@ -87,7 +73,7 @@ export function indexedDbLayerStore(dbName = 'imagecompare-viewer-layer'): Layer
   };
 }
 
-/** Wrap a published root in the viewer's layer, loaded from `store` before it is returned; a store that fails leaves the layer in memory for the visit. */
+/** Wrap a published root in the viewer's layer, loaded from `store` before it is returned; a store that fails to load leaves the layer in memory for the visit, and a write the store refuses is lost on reload alone. */
 export async function createViewerLayer(base: LayerBase, listedPaths: ReadonlySet<string>, store: LayerStore, namespace: string): Promise<LayeredRoot> {
   const prefix = `${base.rootPath}/`;
   const listedDirs = new Set<string>();
@@ -101,9 +87,10 @@ export async function createViewerLayer(base: LayerBase, listedPaths: ReadonlySe
   } catch {
     persistent = false;
   }
+  // Unread contents are never written over; a refused write costs that write only (docs/standalone.md, "The viewer layer").
   const persist = (act: () => Promise<void>): Promise<void> => {
     if (!persistent) return Promise.resolve();
-    return act().catch(() => { persistent = false; });
+    return act().catch(() => undefined);
   };
   // The layer refuses both writes and deletes of a published path (docs/standalone.md: published-originals-never-written).
   const refuseListed = (path: string): void => {

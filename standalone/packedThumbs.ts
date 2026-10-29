@@ -38,7 +38,7 @@ export function parsePackedThumbs(text: string): Map<string, PackedThumb> {
 }
 
 /** How long the strip waits on one thumbs file before decoding full images instead. */
-export const PACKED_THUMBS_TIMEOUT_MS = 20_000;
+const PACKED_THUMBS_TIMEOUT_MS = 20_000;
 
 /** Every listed thumbs file fetched in parallel and merged; one that is missing, unreachable, malformed or slower than `timeoutMs` contributes nothing and never rejects the load (docs/standalone.md: packed-thumbs-never-required). */
 export async function loadPackedThumbs(paths: readonly string[], fetchText: (path: string) => Promise<string>, timeoutMs = PACKED_THUMBS_TIMEOUT_MS): Promise<Map<string, PackedThumb>> {

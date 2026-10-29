@@ -5,10 +5,10 @@
 //
 // Every decision (layout, the regime's limits, thumbs packing, publish batches) is standalone/sharePlan.ts's,
 // bundled here in memory with esbuild exactly as scripts/build-standalone.mjs bundles the page; this file only
-// parses arguments, makes sure the page is built, and prints. A refusal prints every violation and exits 1 with
-// nothing staged (docs/standalone.md: pack-refuses-never-alters).
+// parses arguments, builds the page from this checkout, and prints. A refusal prints every violation and exits 1
+// with nothing staged (docs/standalone.md: pack-refuses-never-alters).
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,7 +50,6 @@ const bundle = await esbuild.build({
   target: 'node18',
   write: false,
   external: ['sharp'],
-  alias: { vscode: join(ROOT, 'standalone', 'shims', 'vscode.ts') },
 });
 const mod = { exports: {} };
 new Function('module', 'exports', 'require', bundle.outputFiles[0].text)(mod, mod.exports, createRequire(join(ROOT, 'package.json')));
@@ -58,9 +57,17 @@ const { shareComparison, nodeShareIo, nodeBase64, ShareRefusal, isHostRegimeName
 
 if (!isHostRegimeName(opts.host)) usage(`unknown --host ${opts.host} (known: ${Object.keys(HOST_REGIMES).join(', ')})`);
 
-if (!existsSync(PAGE)) {
-  console.log('dist/standalone/image_compare.html missing — running `npm run build:standalone` first...');
-  execSync('npm run build:standalone', { cwd: ROOT, stdio: 'inherit' });
+// Every run, never only when missing: a page left in dist/ by an older checkout may not read the manifest staged beside it.
+console.log('Building the page from this checkout (`npm run compile`, then `npm run build:standalone`)...');
+for (const cmd of ['npm run compile', 'npm run build:standalone']) {
+  try {
+    execSync(cmd, { cwd: ROOT, stdio: 'pipe' });
+  } catch (err) {
+    process.stdout.write(err.stdout ?? '');
+    process.stderr.write(err.stderr ?? '');
+    console.error(`\`${cmd}\` failed; nothing was staged.`);
+    process.exit(1);
+  }
 }
 
 const out = resolve(opts.out);
@@ -76,7 +83,7 @@ try {
   console.log(`Staged "${summary.name}" for ${summary.host} in ${out}`);
   console.log(`  ${summary.images} images (${(summary.imageBytes / 1e6).toFixed(1)} MB), ${summary.thumbsFiles} thumbs file(s), ${(summary.totalBytes / 1e6).toFixed(1)} MB in total`);
   if (summary.thumbless.length > 0) console.log(`  ${summary.thumbless.length} image(s) with no packed thumbnail (decoded in the page instead): ${summary.thumbless.join(', ')}`);
-  console.log(`  ${summary.batches} publish batch(es) — see publish-plan.json; batch 0 carries the page, the manifest and the thumbs`);
+  console.log(`  ${summary.batches} publish batch(es) — see publish-plan.json; every batch carries the page, batch 0 also the manifest and the thumbs`);
 } catch (err) {
   if (err instanceof ShareRefusal) {
     console.error(`Refused — nothing was staged in ${out}:`);

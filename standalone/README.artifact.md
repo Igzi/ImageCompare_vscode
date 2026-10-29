@@ -24,7 +24,7 @@ subdirectories each hold one modality of the same image set; files are matched i
 | | Chrome / Edge | Firefox / Safari |
 |---|---|---|
 | view, compare, zoom, pan | yes | yes |
-| winner voting | yes, saved to `results.txt` in the folder | in-session only |
+| winner voting | yes, saved to `results.txt` in the folder | no |
 | crop written back to every modality | yes | no |
 | delete | yes | no |
 | PPTX export | yes | yes |
@@ -48,7 +48,7 @@ with the sharing script in [toshas/ImageCompare_vscode](https://github.com/tosha
 node scripts/share-comparison.mjs <folder | session.imagecompare> --out <dir> [--host claude-artifact|static] [--title <name>]
 ```
 
-It stages `image_compare.html` unmodified but for its title, an `imagecompare.json` listing the
+It builds `image_compare.html` from that checkout and stages it unmodified but for its title, an `imagecompare.json` listing the
 images (paths relative to the page) and naming the host, every image byte for byte, prebuilt strip
 thumbnails, and a `publish-plan.json` that splits the upload into batches the host accepts. A
 comparison the host would refuse (image types it does not serve, size or count limits) is reported in

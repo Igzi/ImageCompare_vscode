@@ -244,11 +244,12 @@ untested, as are the coordinate contract, the EXIF path, `readCropMetadata`, and
   in the other. Both branches are on `ScanResult.mode` inside `performCrop`, never on a host's guess
   (`docs/session-files.md: mode-is-explicit`).
 - **`cropnn-writer-reader-match`** — the `_cropNN` writer format keeps matching every `_crop\d+`
-  reader — `fileService.ts`'s reference deprioritization and its enumeration filter
-  (`docs/session-files.md: folder-of-images-is-a-file-list`), the PPTX parent/crop pairing, and
-  `nextCropName`'s own scan for the next free number. Zero-padded, decimal, at the end of the
-  basename. The two `fileService` readers test through `CROP_SUFFIX_RE`, exported from `cropPlan.ts`
-  beside the writer, so the format has one regex rather than a copy per reader.
+  reader — `fileService.ts`'s reference deprioritization, the folder enumeration filter
+  (`enumeratedImages` in `cropPlan.ts`, `docs/session-files.md: folder-of-images-is-a-file-list`),
+  the PPTX parent/crop pairing, and `nextCropName`'s own scan for the next free number. Zero-padded,
+  decimal, at the end of the basename. The deprioritization and the enumeration filter test through
+  `CROP_SUFFIX_RE`, exported from `cropPlan.ts` beside the writer, so the format has one regex rather
+  than a copy per reader.
 - **`croprect-six-integers`** — the `CropRect` value stays `x,y,w,h,srcW,srcH`, six integers, in
   source-image pixels. Both the exporter and an external tool parse it. (That it is written to both
   EXIF and `tEXt`, and that `readCropMetadata` may use a bare `sharp()`, are `metadata-written-twice`

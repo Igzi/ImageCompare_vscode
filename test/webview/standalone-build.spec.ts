@@ -662,6 +662,42 @@ test.describe('standalone published comparison for a Claude artifact', () => {
     expect(requested.filter(r => r.includes('/art-votes/') && (!r.startsWith('GET ') || r.includes('results.txt')))).toEqual([]);
   });
 
+  test('standalone published comparison copies results.txt on a plain-http host, where the async clipboard API is absent', async ({ page }) => {
+    // An http:// origin other than localhost is not a secure context, so it has no navigator.clipboard.
+    // Removed before the page runs; the test reads the clipboard back through the real one.
+    await page.addInitScript(() => {
+      (window as unknown as { __realClipboard: Clipboard }).__realClipboard = navigator.clipboard;
+      Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined, configurable: true });
+    });
+    publish('art-votes-http', twoRows(), { host: 'static' });
+    await openPublished(page, 'art-votes-http');
+    await page.locator('#viewer').click();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await icState(page)).winners).toEqual([[0, 0]]);
+    await page.locator('#results-btn').click();
+    await expect(page.locator('#copy-toast')).toHaveText('results.txt copied to the clipboard (1 vote)');
+    const read = await page.evaluate(() => (window as unknown as { __realClipboard: Clipboard }).__realClipboard.readText());
+    expect(read.startsWith('# ImageCompare Results')).toBe(true);
+    expect(read).toMatch(/^scene_01 = gt\r?$/m);
+  });
+
+  test('standalone published comparison copies a published image\'s URL as its path', async ({ page }) => {
+    publish('art-path', {
+      'gt/scene 01.png': makeSolidPng(8, 6, [255, 0, 0]),
+      'gt/scene 02.png': makeSolidPng(9, 7, [0, 255, 0]),
+      'pred/scene 01.png': makeSolidPng(5, 4, [0, 0, 255]),
+      'pred/scene 02.png': makeSolidPng(6, 5, [255, 255, 0]),
+    });
+    await openPublished(page, 'art-path');
+    await page.locator('.modality-btn').first().click({ button: 'right' });
+    await page.locator('#context-menu [data-action-id="copyPath"]').click();
+    await expect(page.locator('#copy-toast')).toHaveText('Path copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseUrl}/art-path/gt`);
+    await page.locator('#viewer').click({ button: 'right' });
+    await page.locator('#context-menu [data-action-id="copyPath"]').click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseUrl}/art-path/gt/scene%2001.png`);
+  });
+
   test('standalone published comparison keeps the viewer\'s crops across a reload and deletes them, never an original', async ({ page }) => {
     publish('art-crops', twoRows(), { host: 'claude-artifact' });
     await openPublished(page, 'art-crops');
@@ -792,6 +828,30 @@ test.describe('standalone published comparison strip thumbnails', () => {
     await expect.poll(async () => (await tileWidths(page)).sort((a, b) => a - b)).toEqual([3, 3, 3, 3, 3, 4]);
     expect(requested).toContain('GET /art-thumbs-partial/pred/scene_03_pred.png');
     expect(requested).not.toContain('GET /art-thumbs-partial/gt/scene_03_gt.png');
+  });
+
+  test('standalone published comparison loads the open row while the thumbs file is still downloading', async ({ page }) => {
+    // Four columns, three rows: twelve sweep thumbnails, more than any pool's speculation share.
+    // Waiting for the pack inside pool slots, they filled that share and queued the rest, and the
+    // row's fourth column (a sibling-tail load, deferred while anything else is queued) waited
+    // out the pack's 20 s timeout.
+    const files: Record<string, Buffer> = {};
+    for (const column of ['c1', 'c2', 'c3', 'c4']) {
+      for (const row of [1, 2, 3]) files[`${column}/scene_0${row}_${column}.png`] = makeSolidPng(4 + row, 4, [row * 60, 0, 0]);
+    }
+    publish('art-thumbs-held', files, { host: 'claude-artifact', thumbs: ['imagecompare.thumbs.0.json'] });
+    let release!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/art-thumbs-held/imagecompare.thumbs.0.json', async route => {
+      await released;
+      await route.fulfill({ contentType: 'application/json', body: packed(Object.keys(files)) });
+    });
+    await openPublished(page, 'art-thumbs-held', 3);
+    await expect.poll(() => requested.filter(r => r.startsWith('GET /art-thumbs-held/c') && r.includes('scene_01')).sort()).toEqual(
+      ['c1', 'c2', 'c3', 'c4'].map(c => `GET /art-thumbs-held/${c}/scene_01_${c}.png`),
+    );
+    release();
+    await expect.poll(async () => [...new Set(await tileWidths(page))]).toEqual([3]);
   });
 });
 
